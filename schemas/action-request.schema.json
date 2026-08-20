@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyber-sop-harness.local/schemas/action-request.schema.json",
+  "title": "Action Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "run_id",
+    "action_id",
+    "phase",
+    "target_ref",
+    "capability_ref",
+    "arguments",
+    "purpose",
+    "risk_class",
+    "scope_ref",
+    "authorization_ref",
+    "methodology_refs",
+    "approval_ref",
+    "credential_ref",
+    "resolved_addresses"
+  ],
+  "properties": {
+    "type": { "type": "string", "const": "ACTION_REQUEST" },
+    "run_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "action_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "parent_event_id": { "type": ["string", "null"] },
+    "phase": { "type": "string", "minLength": 1 },
+    "target_ref": { "type": "string", "minLength": 1 },
+    "capability_ref": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+    "arguments": { "type": "object" },
+    "purpose": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "hypothesis": { "type": ["string", "null"], "maxLength": 2000 },
+    "expected_observation": { "type": ["string", "null"], "maxLength": 2000 },
+    "risk_class": { "type": "string", "enum": ["R0", "R1", "R2", "R3", "R4"] },
+    "scope_ref": { "type": "string", "minLength": 1 },
+    "authorization_ref": { "type": "string", "minLength": 1 },
+    "methodology_refs": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "approval_ref": { "type": ["string", "null"] },
+    "credential_ref": { "type": ["string", "null"] },
+    "resolved_addresses": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "risk_class": { "enum": ["R3", "R4"] }
+        }
+      },
+      "then": {
+        "properties": {
+          "approval_ref": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+# Secrets and local credentials
+.env
+.env.*
+.secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Local environments and caches
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.idea/
+.vscode/
+
+# Runtime artifacts; sanitized release evidence is tracked deliberately
+evidence/
+artifacts/
+runs/
+logs/
+*.log
+
+# Local harness state: journals, keys, selections, secrets (never commit)
+data/
+
+# Model weights and pinned runtime engines (user-staged, not bundled)
+models/
+runtime/
+
+# Build output
+dist/
+build/
+target/
+
+# .NET build output and IDE state
+bin/
+obj/
+.vs/
+*.user

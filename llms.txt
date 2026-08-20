@@ -1,0 +1,31 @@
+# Cyber SOP Harness
+
+Cyber SOP Harness is a portable governance and execution framework for authorized cybersecurity assessment agents. It places an external policy, evidence, and verification layer between any model (local GGUF runtime or remote API) and any security tool: the model proposes, the policy engine decides, the typed adapter executes, the evidence store records, and the independent verifier validates.
+
+Key properties: fail-closed startup, strict proposal parsing, frozen typed tool registries, durable tamper-detecting evidence journal, DPAPI-protected provenance keys, loopback-only local model connections, and consent-gated external APIs. Authorized defensive testing only.
+
+## Key links
+
+- README.md — overview, install, CLI reference, architecture
+- ARCHITECTURE.md — cross-platform topology, trust boundaries, deployment constraints
+- RESEARCH.md — source-backed research and design decisions
+- ROADMAP.md — phases, skills, deliverables, verification gates
+- docs/ — requirements, threat model, decisions, fixtures, acceptance records
+- SECURITY.md — reporting and security model
+- CONTRIBUTING.md — build, test, and PR process
+
+## Build
+
+Windows, .NET 10 SDK: `dotnet build CyberSopHarness.slnx --configuration Release`
+
+## Tests
+
+Two self-running console suites, fully offline and deterministic: `dotnet run --project tests/Phase2.Tests` (policy/permit/worker core, 10 tests) and `dotnet run --project tests/Phase3.Tests` (providers, evidence, provenance, bootstrap, 23 tests). A real-model runtime test is opt-in via `PHASE3B_REAL_MODEL=1` and is not part of CI.
+
+## CLI surface
+
+`setup`, `run [--port N] [--telemetry] [--data-dir DIR]`, `endpoint set|clear|show`, `secret set|get|clear|rotate`, `status`, `model list|info|select`.
+
+## License
+
+MIT — see LICENSE.

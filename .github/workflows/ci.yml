@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        run: dotnet build CyberSopHarness.slnx --configuration Release
+
+      - name: Phase 2 tests
+        run: dotnet run --project tests/Phase2.Tests --configuration Release
+
+      - name: Phase 3 tests
+        run: dotnet run --project tests/Phase3.Tests --configuration Release

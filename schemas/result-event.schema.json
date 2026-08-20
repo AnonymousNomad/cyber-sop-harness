@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyber-sop-harness.local/schemas/result-event.schema.json",
+  "title": "Result Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "run_id",
+    "action_id",
+    "action_request_ref",
+    "result_event_id",
+    "status",
+    "tool_ref",
+    "tool_version",
+    "worker_ref",
+    "target_ref",
+    "authorization_ref",
+    "scope_ref",
+    "capability_ref",
+    "risk_class",
+    "methodology_refs",
+    "policy_decision",
+    "policy_ref",
+    "policy_version",
+    "permit_ref",
+    "raw_sha256",
+    "raw_artifact_ref",
+    "redacted_artifact_ref",
+    "artifact_refs",
+    "observation_refs",
+    "approval_ref",
+    "started_at",
+    "finished_at",
+    "observed_at",
+    "exit_code",
+    "cleanup_result",
+    "event_hash",
+    "previous_event_hash"
+  ],
+  "properties": {
+    "type": { "type": "string", "const": "TOOL_RESULT" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "action_id": { "type": "string", "minLength": 1 },
+    "action_request_ref": { "type": "string", "minLength": 1 },
+    "result_event_id": { "type": "string", "minLength": 1 },
+    "status": { "type": "string", "enum": ["SUCCESS", "PARTIAL", "TIMEOUT", "UNKNOWN", "TOOL_ERROR", "BLOCKED"] },
+    "tool_ref": { "type": "string", "minLength": 1 },
+    "tool_version": { "type": "string", "minLength": 1 },
+    "worker_ref": { "type": "string", "minLength": 1 },
+    "target_ref": { "type": "string", "minLength": 1 },
+    "authorization_ref": { "type": "string", "minLength": 1 },
+    "scope_ref": { "type": "string", "minLength": 1 },
+    "capability_ref": { "type": "string", "minLength": 1 },
+    "risk_class": { "type": "string", "enum": ["R0", "R1", "R2", "R3", "R4"] },
+    "methodology_refs": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "policy_decision": { "type": "string", "enum": ["ALLOW", "BLOCK", "APPROVAL_REQUIRED"] },
+    "policy_ref": { "type": "string", "minLength": 1 },
+    "policy_version": { "type": "string", "minLength": 1 },
+    "permit_ref": { "type": ["string", "null"] },
+    "raw_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "redacted_sha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+    "raw_artifact_ref": { "type": "string", "minLength": 1 },
+    "redacted_artifact_ref": { "type": ["string", "null"] },
+    "artifact_refs": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "observation_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "parent_event_id": { "type": ["string", "null"] },
+    "approval_ref": { "type": ["string", "null"] },
+    "exit_code": { "type": ["integer", "null"] },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "cleanup_result": { "type": "string", "enum": ["PENDING", "SUCCEEDED", "FAILED", "NOT_APPLICABLE"] },
+    "event_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "previous_event_hash": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": { "enum": ["SUCCESS", "PARTIAL", "TIMEOUT", "UNKNOWN", "TOOL_ERROR"] }
+        }
+      },
+      "then": {
+        "properties": {
+          "policy_decision": { "const": "ALLOW" },
+          "permit_ref": { "type": "string", "minLength": 1 },
+          "redacted_artifact_ref": { "type": "string", "minLength": 1 }
+        },
+        "required": ["permit_ref"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": { "enum": ["SUCCESS", "PARTIAL"] }
+        }
+      },
+      "then": {
+        "properties": {
+          "redacted_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "observation_refs": { "minItems": 1 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": { "const": "BLOCKED" }
+        }
+      },
+      "then": {
+        "properties": {
+          "policy_decision": { "const": "BLOCK" },
+          "permit_ref": { "type": "null" },
+          "observation_refs": { "maxItems": 0 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "risk_class": { "enum": ["R3", "R4"] }
+        }
+      },
+      "then": {
+        "properties": {
+          "approval_ref": { "type": "string", "minLength": 1 }
+        },
+        "required": ["approval_ref"]
+      }
+    }
+  ]
+}

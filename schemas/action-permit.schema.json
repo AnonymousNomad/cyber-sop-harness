@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyber-sop-harness.local/schemas/action-permit.schema.json",
+  "title": "One-Use Action Permit",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "permit_id",
+    "run_id",
+    "action_id",
+    "action_hash",
+    "canonicalization_ref",
+    "target_ref",
+    "scope_ref",
+    "scope_hash",
+    "policy_ref",
+    "policy_version",
+    "worker_ref",
+    "capability_ref",
+    "authorization_ref",
+    "credential_ref",
+    "approval_ref",
+    "approval_hash",
+    "risk_class",
+    "methodology_refs",
+    "issuer_ref",
+    "issuer_signature_ref",
+    "decision",
+    "one_use",
+    "issued_at",
+    "expires_at",
+    "nonce",
+    "consumption_state",
+    "consumed_at"
+  ],
+  "properties": {
+    "permit_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "run_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "action_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "action_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "canonicalization_ref": { "type": "string", "minLength": 1 },
+    "target_ref": { "type": "string", "minLength": 1 },
+    "scope_ref": { "type": "string", "minLength": 1 },
+    "scope_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "policy_ref": { "type": "string", "minLength": 1 },
+    "policy_version": { "type": "string", "minLength": 1 },
+    "worker_ref": { "type": "string", "minLength": 1 },
+    "capability_ref": { "type": "string", "minLength": 1 },
+    "authorization_ref": { "type": "string", "minLength": 1 },
+    "credential_ref": { "type": ["string", "null"] },
+    "approval_ref": { "type": "string", "minLength": 1 },
+    "approval_hash": { "type": "string", "minLength": 1 },
+    "risk_class": { "type": "string", "enum": ["R0", "R1", "R2", "R3", "R4"] },
+    "methodology_refs": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "issuer_ref": { "type": "string", "minLength": 1 },
+    "issuer_signature_ref": { "type": "string", "minLength": 1 },
+    "decision": { "type": "string", "const": "ALLOW" },
+    "one_use": { "type": "boolean", "const": true },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "nonce": { "type": "string", "minLength": 16, "maxLength": 256 },
+    "consumption_state": { "type": "string", "enum": ["UNUSED", "CONSUMED", "REVOKED", "EXPIRED"] },
+    "consumed_at": { "type": ["string", "null"], "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "consumption_state": { "const": "UNUSED" } } },
+      "then": { "properties": { "consumed_at": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "consumption_state": { "const": "CONSUMED" } } },
+      "then": { "properties": { "consumed_at": { "type": "string", "minLength": 1, "format": "date-time" } } }
+    },
+    {
+      "if": { "properties": { "consumption_state": { "enum": ["REVOKED", "EXPIRED"] } } },
+      "then": { "properties": { "consumed_at": { "type": "null" } } }
+    }
+  ]
+}

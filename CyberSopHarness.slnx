@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CyberSopHarness.App/CyberSopHarness.App.csproj" />
+    <Project Path="src/CyberSopHarness.Core/CyberSopHarness.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Phase2.Tests/Phase2.Tests.csproj" />
+    <Project Path="tests/Phase3.Tests/Phase3.Tests.csproj" />
+  </Folder>
+</Solution>
