@@ -87,7 +87,7 @@ flowchart LR
     subgraph Control["Governance layer"]
         BOOT["HarnessBootstrapper<br/>fail-closed startup"]
         PARSE["Strict proposal parser<br/>+ normalizer"]
-        POLICY["Policy engine<br/>fixture.inspect registry"]
+        POLICY["Policy engine<br/>scope + capability + approval"]
         PERMIT["One-use permit"]
         BROKER["Tool broker<br/>frozen typed adapters"]
         VERIFY["Independent verifier"]
@@ -99,6 +99,8 @@ flowchart LR
     BROKER --> VERIFY --> JOURNAL
     JOURNAL --> REPORT["Report gate"]
 ```
+
+The policy engine evaluates a canonicalized action against the frozen authorization manifest, signed approver identity, target/resolved-address scope (including redirects), allowed/prohibited methods, registered typed capability, risk class, and action-bound expiry-checked approval. `R4` is denied. The repository's executable adapter is currently `fixture.inspect`; additional tools must enter through the same frozen registry and policy path.
 
 Trust boundaries: the model never talks to tools; every proposal crosses the parser, policy, permit, and broker before any tool executes, and every execution is journaled and independently verified.
 
@@ -149,7 +151,7 @@ The desk supports `action`, `doctor`, `emergency`, `engagement`, `evidence`, `ex
 | `setup` | Provider/model selection wizard with full disclosure checks |
 | `run [--port N] [--telemetry] [--data-dir DIR]` | Select → bootstrap → probe → governed execution → stop |
 | `endpoint set <url>` / `clear` / `show` | External model endpoint custody (https any host, http loopback-only) |
-| `secret set|get|clear|rotate <name>` | DPAPI-protected secret custody |
+| `secret set/get/clear/rotate <name>` | DPAPI-protected secret custody |
 | `model list` / `info <name>` / `select <name>` | Staged model catalog and active selection |
 | `status` | Selection, runtime, evidence, and endpoint state |
 | `desk [options]` | Fixed-verb command shell with plain/ANSI rendering, bounded history, JSON mode, and emergency stop |
@@ -166,7 +168,7 @@ Every governed run produces: a `DurableEvidenceJournal` with recovery and tamper
 
 ## Tests
 
-40 deterministic offline tests across three self-running suites (0 real-model opt-ins in CI):
+40 deterministic offline tests across three self-running suites. The count is deliberately conservative: these are fast, reproducible contract and behavior tests rather than broad model-output snapshots. Real-model smoke coverage remains opt-in so CI does not depend on weights or network access:
 
 ```powershell
 dotnet run --project tests/Phase2.Tests --configuration Release  # 10 tests: policy, permits, workers, job objects
