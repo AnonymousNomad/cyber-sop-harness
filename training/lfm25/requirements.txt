@@ -1,0 +1,9 @@
+transformers==4.57.3
+trl==0.22.2
+peft>=0.15.2,<0.18
+accelerate>=1.0
+datasets>=3.0
+jsonschema>=4.21
+torch>=2.4
+huggingface_hub[hf_transfer]>=0.34
+

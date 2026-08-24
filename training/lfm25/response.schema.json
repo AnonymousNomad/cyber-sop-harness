@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Cyber SOP Harness Terminal Control Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decision", "reason_code", "reason", "confidence", "action_request"],
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": ["PROPOSE", "REFUSE", "CLARIFY"]
+    },
+    "reason_code": {
+      "type": "string",
+      "enum": [
+        "authorized_action",
+        "approval_required",
+        "cleanup_action",
+        "out_of_scope",
+        "expired_authorization",
+        "forbidden_risk_class",
+        "ambiguous_target",
+        "missing_evidence",
+        "injected_instruction",
+        "credential_discovery_stop"
+      ]
+    },
+    "reason": { "type": "string", "minLength": 8, "maxLength": 500 },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "action_request": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "../../schemas/action-request.schema.json" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision": { "enum": ["REFUSE", "CLARIFY"] }
+        }
+      },
+      "then": {
+        "properties": {
+          "action_request": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": { "const": "PROPOSE" }
+        }
+      },
+      "then": {
+        "properties": {
+          "action_request": { "type": "object" }
+        }
+      }
+    }
+  ]
+}

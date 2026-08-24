@@ -1,0 +1,9 @@
+7a82e3c100bcfcf5473aa7a5249c53059f40aea99c63df83d709fdc6be7b5b67  tools/llama.cpp-minimal/build-cli/bin/llama-cli
+82bb2db5b82b39156da0a46f59ce2992560d00f0a96e714b5a7a25d1bcb5b595  tools/llama.cpp-minimal/build-cli/bin/libllama-cli-impl.so
+8d72433698623a1abe987916f7e858553857dc435d5a55b777d57989ce10b9ce  tools/llama.cpp-minimal/build-cli/bin/libllama-server-impl.so
+730a09c79a774bd84121193b8faae291a84737ef586c2a1d042f297907f38a1a  tools/llama.cpp-minimal/build-cli/bin/libllama-common.so.0
+2938d8d77c82f7fd80b9231824b11e75d1e38b4fb6bcc37ea7bb1fb346824c97  tools/llama.cpp-minimal/build-cli/bin/libllama.so.0
+6f2770307568eeeba0a8c9d3a10a6bc9cd984836b7a5989362e39478f3c543a9  tools/llama.cpp-minimal/build-cli/bin/libmtmd.so.0
+e5a8bcf68a1e3b267a0ad6dd0fe2b2ef0e4d907767dfd16343bdbb7726650a77  tools/llama.cpp-minimal/build-cli/bin/libggml.so.0
+2a2ed446daae5d3af912eeae18f93c348457be763024766db1e8bc29a982781e  tools/llama.cpp-minimal/build-cli/bin/libggml-base.so.0
+0c33943d0504d13da741fbe0a60f6e05355aba43afbf733f081013839449800f  tools/llama.cpp-minimal/build-cli/bin/libggml-cpu.so.0
