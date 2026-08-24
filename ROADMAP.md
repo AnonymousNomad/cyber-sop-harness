@@ -5,15 +5,16 @@ Date: 2026-08-19
 
 ## Skill Count
 
-There are sixteen skills. Two skills are global: governance and evaluation/release discipline. Phase-specific skills are loaded only for their phase.
+There are twenty-three skills. Governance, evaluation/release, terminal control-plane, command-desk UI/workflow, edge-model capacity, LFM2.5 fine-tune operations, and bounty workflow rules are reusable across phases.
 
 | Phase | Skills |
 |---|---|
 | Global | `cyber-project-governance`, `cyber-evaluation-reporting-release` |
+| Terminal runtime | `cyber-terminal-control-plane`, `cyber-edge-model-capacity`, `cyber-lfm25-finetune-operations`, `cyber-command-desk-parrot-foundation`, `cyber-command-desk-status-system`, `cyber-command-desk-workflow-views` |
 | Phase 1: Foundation and architecture | `cyber-cross-platform-architecture` |
 | Phase 2: Authorization and containment | `cyber-authorization-scope-policy`, `cyber-safe-execution-containment` |
 | Phase 3: Portable runtime and evidence | `cyber-model-tool-interoperability`, `cyber-state-evidence-replay`, `cyber-local-model-runtime`, `cyber-model-provider-selection`, `cyber-model-packaging-supply-chain`, `cyber-durable-evidence-persistence`, `cyber-provenance-key-custody`, `cyber-secret-custody` |
-| Phase 4: Methodology and SOP engine | `cyber-methodology-as-code`, `cyber-web-api-business-logic` |
+| Phase 4: Methodology and SOP engine | `cyber-methodology-as-code`, `cyber-web-api-business-logic`, `cyber-bounty-sop-terminal-workflow` |
 | Phase 5: Mobile and assurance | `cyber-mobile-control-plane` |
 
 ## Phase 1: Foundation and Architecture

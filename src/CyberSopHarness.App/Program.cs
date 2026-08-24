@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Globalization;
 using CyberSopHarness.Core;
 
 internal static class Program
@@ -14,23 +15,28 @@ internal static class Program
                 return 0;
             }
             var dataDir = ResolveDataDir(args);
-            var protector = new WindowsDpapiSecretProtector("cyber-sop-harness");
-            var secrets = new PersistentSecretStore(Path.Combine(dataDir, "secrets"), protector, "cyber-sop-harness");
             var selectionStore = new ModelProviderSelectionStore(Path.Combine(dataDir, "provider-selection.json"));
             var endpointStore = new ExternalEndpointStore(Path.Combine(dataDir, "external-endpoint.json"));
+            PersistentSecretStore CreateSecrets()
+            {
+                var protector = new WindowsDpapiSecretProtector("cyber-sop-harness");
+                return new PersistentSecretStore(Path.Combine(dataDir, "secrets"), protector, "cyber-sop-harness");
+            }
 
             switch (args[0])
             {
                 case "setup":
-                    return await SetupAsync(secrets, selectionStore, args, dataDir, endpointStore);
+                    return await SetupAsync(CreateSecrets(), selectionStore, args, dataDir, endpointStore);
                 case "status":
                     return await StatusAsync(selectionStore, endpointStore);
                 case "secret":
-                    return await SecretAsync(secrets, args);
+                    return await SecretAsync(CreateSecrets(), args);
                 case "run":
-                    return await RunAsync(secrets, selectionStore, args, dataDir);
+                    return await RunAsync(CreateSecrets(), selectionStore, args, dataDir);
                 case "endpoint":
                     return await EndpointAsync(endpointStore, args);
+                case "desk":
+                    return await DeskAsync(selectionStore, endpointStore, args, dataDir);
                 default:
                     Console.Error.WriteLine("unknown command: " + args[0]);
                     PrintHelp();
@@ -78,6 +84,93 @@ internal static class Program
         var selectionEvent = await wizard.ConfirmAsync(provider, acknowledged, previous?.SelectionId, CancellationToken.None);
         Console.WriteLine("SELECTION_EVENT: " + selectionEvent.SelectionId + " " + selectionEvent.ProviderRef + " " + selectionEvent.EgressStatus + " previous=" + (selectionEvent.PreviousSelectionId ?? "none"));
         return 0;
+    }
+
+    private static async Task<int> DeskAsync(
+        ModelProviderSelectionStore selectionStore,
+        ExternalEndpointStore endpointStore,
+        string[] args,
+        string dataDir)
+    {
+        var selection = await selectionStore.LoadAsync(CancellationToken.None);
+        var endpoint = await endpointStore.LoadAsync(CancellationToken.None);
+        var providerModel = selection?.ProviderRef ?? "none";
+        var engagementLabel = ArgumentValue(args, "--engagement") ?? "unassigned";
+        var scopeRef = ArgumentValue(args, "--scope") ?? "none";
+        var riskClass = ArgumentValue(args, "--risk") ?? "R0";
+        var initialState = new CommandDeskState(
+            Environment.UserName,
+            "csh",
+            engagementLabel,
+            scopeRef,
+            riskClass,
+            providerModel,
+            0,
+            "not-measured",
+            false,
+            DateTimeOffset.UtcNow);
+        var renderOptions = CommandDeskRenderOptions.FromEnvironment(args, !Console.IsOutputRedirected);
+        var renderer = new CommandDeskRenderer(renderOptions);
+        var registry = CommandDeskVerbRegistry.Default;
+        var historyDirectory = args.Contains("--no-history", StringComparer.OrdinalIgnoreCase) ? null : Path.Combine(dataDir, "command-history");
+        var replOptions = new CommandDeskReplOptions();
+
+        Task<CommandDeskExecution> Handler(CommandDeskInvocation invocation, CommandDeskState state, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            CommandDeskResult result = invocation.Verb.ToLowerInvariant() switch
+            {
+                "help" => CommandDeskResult.Info("Registered verbs", registry.Verbs.Select(verb => $"{verb.Name}: {verb.Summary}").ToArray()),
+                "doctor" => DoctorResult(state, dataDir, selection?.ProviderRef, endpoint?.ToString()),
+                "emergency" when invocation.Arguments.Count == 0 || invocation.Arguments[0].Equals("stop", StringComparison.OrdinalIgnoreCase) =>
+                    new(1, CommandDeskSeverity.Critical, "emergency stop engaged; governed workers must now be cancelled by the supervisor", Array.Empty<string>()),
+                "emergency" when invocation.Arguments.Count == 1 && invocation.Arguments[0].Equals("status", StringComparison.OrdinalIgnoreCase) =>
+                    state.EmergencyStopped
+                        ? CommandDeskResult.Warning("emergency stop is engaged")
+                        : CommandDeskResult.Info("emergency stop is clear"),
+                "model" => CommandDeskResult.Info(
+                    $"provider={providerModel}",
+                    "pin verification requires a ModelRuntimeManifest; run the dedicated model workflow"),
+                "status" => CommandDeskResult.Info(
+                    $"provider={providerModel} egress={(selection?.ExternalEgressAllowed == true ? "allowed" : "denied")} endpoint={endpoint?.ToString() ?? "none"}"),
+                _ => new(3, CommandDeskSeverity.Warning, $"{invocation.Verb} is registered but its governed execution path is not wired yet", Array.Empty<string>())
+            };
+            var nextState = result.Severity == CommandDeskSeverity.Critical ? state with { EmergencyStopped = true } : null;
+            return Task.FromResult(new CommandDeskExecution(result, nextState));
+        }
+
+        var repl = new CommandDeskRepl(renderer, registry, new DelegateCommandDeskHandler(Handler), replOptions, historyDirectory);
+        var command = ArgumentValue(args, "--command");
+        ICommandDeskInputReader reader = command is null
+            ? new ConsoleCommandDeskInputReader()
+            : new TextReaderCommandDeskInputReader(new StringReader(command.Replace("\\n", "\n", StringComparison.Ordinal)));
+        return await repl.RunAsync(Console.Out, Console.Error, reader, initialState, CancellationToken.None);
+    }
+
+    private static CommandDeskResult DoctorResult(
+        CommandDeskState state,
+        string dataDir,
+        string? providerRef,
+        string? endpoint)
+    {
+        var details = new List<string>();
+        try
+        {
+            Directory.CreateDirectory(dataDir);
+            var probePath = Path.Combine(dataDir, ".doctor-write-test");
+            File.WriteAllText(probePath, DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+            File.Delete(probePath);
+            details.Add("data_dir=writeable");
+        }
+        catch (IOException exception)
+        {
+            return CommandDeskResult.Failure("data directory preflight failed: " + exception.Message, "state=" + state.ResourceHealth);
+        }
+        details.Add("provider=" + (providerRef ?? "none"));
+        details.Add("endpoint=" + (endpoint ?? "none"));
+        details.Add("resource_health=" + state.ResourceHealth);
+        details.Add("emergency_stop=" + (state.EmergencyStopped ? "ENGAGED" : "clear"));
+        return CommandDeskResult.Success("preflight completed; runtime/model checks require pinned manifests", details.ToArray());
     }
 
     private static async Task<int> StatusAsync(ModelProviderSelectionStore selectionStore, ExternalEndpointStore endpointStore)
@@ -364,6 +457,8 @@ internal static class Program
         Console.WriteLine("  status [--data-dir <dir>]");
         Console.WriteLine("  secret set|clear|has <providerId> [--data-dir <dir>]");
         Console.WriteLine("  endpoint set|clear|show <url> [--data-dir <dir>]");
+        Console.WriteLine("  desk [--command <input>] [--engagement <label>] [--scope <ref>] [--risk R0-R4]");
+        Console.WriteLine("       [--json] [--compact] [--no-color] [--no-history] [--data-dir <dir>]");
         Console.WriteLine("  run [--port <n>] [--telemetry] [--data-dir <dir>]");
         Console.WriteLine("  --help");
     }
