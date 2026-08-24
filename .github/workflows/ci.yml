@@ -7,7 +7,11 @@ on:
 
 jobs:
   build-test:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,3 +29,6 @@ jobs:
 
       - name: Phase 3 tests
         run: dotnet run --project tests/Phase3.Tests --configuration Release
+
+      - name: Command desk tests
+        run: dotnet run --project tests/CommandDesk.Tests --configuration Release

@@ -30,6 +30,11 @@ data/
 # Model weights and pinned runtime engines (user-staged, not bundled)
 models/
 runtime/
+*.gguf
+*.safetensors
+
+# Locally installed toolchains and source clones used for experiments/benchmarks
+/tools/
 
 # Build output
 dist/

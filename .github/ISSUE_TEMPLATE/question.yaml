@@ -1,0 +1,25 @@
+name: Question / support
+description: Ask how to use documented preview functionality.
+labels: [question]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What are you trying to do with the current preview?
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, architecture, .NET SDK output, and relevant staged model/runtime versions.
+    validations:
+      required: true
+  - type: textarea
+    id: commands
+    attributes:
+      label: Commands and result
+      description: Include sanitized commands, complete error text, and what you expected.
+    validations:
+      required: true

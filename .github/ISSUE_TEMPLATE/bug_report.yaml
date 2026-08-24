@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a defect in documented or tested behavior.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, model weights, target data, engagement names, or confidential evidence.
+  - type: input
+    id: version
+    attributes:
+      label: Commit or release
+      description: Provide the full commit SHA or tagged release.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows x64
+        - Linux x64
+        - Linux arm64
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: Exact commands, configuration shape, and expected versus actual result.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized logs or test failure
+      description: Paste text output only; redact secrets and paths that disclose protected data.
+    validations:
+      required: true

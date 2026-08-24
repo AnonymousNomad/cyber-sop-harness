@@ -5,16 +5,42 @@ A portable governance and execution framework that puts a policy, evidence, and 
 [![CI](https://github.com/AnonymousNomad/cyber-sop-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/AnonymousNomad/cyber-sop-harness/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4.svg)](https://dotnet.microsoft.com/)
-[![Platform](https://img.shields.io/badge/platform-Windows-0078D6.svg)](https://www.microsoft.com/windows)
-[![Tests](https://img.shields.io/badge/tests-33%20passing-brightgreen.svg)](https://github.com/AnonymousNomad/cyber-sop-harness/actions/workflows/ci.yml)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux--dev-blue.svg)](#status)
+[![Tests](https://img.shields.io/badge/tests-40%20passing-brightgreen.svg)](https://github.com/AnonymousNomad/cyber-sop-harness/actions/workflows/ci.yml)
 
 ## Why
 
-Versioned cybersecurity methodologies are still executed as human judgment calls bolted onto ad-hoc scripts. Cyber SOP Harness converts them into **stateful, verifiable procedures** and inserts an external control plane between any model and any security tool:
+Security teams and authorized bug-bounty researchers increasingly use LLMs to draft actions, triage findings, and explain methodology. The usual failure mode is that a convincing proposal goes straight into a terminal or API with no durable authorization check, permit, evidence chain, or independent verification. That is unsafe for operations and unusable as professional evidence.
+
+Cyber SOP Harness puts an external control plane between a model and a tool. It converts procedures into stateful, verifiable workflows:
 
 > The model proposes. The policy engine decides. The typed adapter executes. The evidence store records. The independent verifier validates.
 
 The result: deterministic offline fixtures and live engagements run under the same fail-closed policy, and every step leaves durable, tamper-detectable evidence.
+
+## Who It Is For
+
+- Security engineers who need reproducible, evidence-backed automation.
+- Authorized bug-bounty operators who must keep every action inside written scope.
+- Red/blue teams that need separate model reasoning from execution authority.
+- Tool authors building model-facing security workflows without giving the model unrestricted shell access.
+
+This project is for authorized work only. It does not authorize targets, bypass scope, or turn an untrusted finding into verified proof.
+
+## Status
+
+**Development preview — not approved for production engagements or live-target operations.**
+
+| Capability | Available today |
+|---|---|
+| Governed offline pipeline | Working Windows CLI path through policy, permit, synthetic-tool dispatch, verification, report, journal, and replay tests |
+| Command desk | Fixed-verb terminal surface with doctor, status, help, model inspection, JSON mode, bounded history, sanitization, and emergency stop; Phase B views are in progress |
+| Cross-platform builds | Linux/arm64 build and 40-test validation pass locally; full governed execution still requires Windows DPAPI custody today |
+| Local model runtime | Manifest design, loopback boundary, and measured LFM2.5 edge benchmark exist; pinned model serving is not yet wired into the desk |
+| Live security tools | Not implemented; the current adapter is explicitly synthetic |
+| Production gate | No release has passed live-target containment, operator acceptance, threat-model review, and independent evidence verification |
+
+Do not point this software at infrastructure you are not explicitly authorized to assess.
 
 ## Features
 
@@ -29,6 +55,8 @@ The result: deterministic offline fixtures and live engagements run under the sa
 ## Table of Contents
 
 - [Security](#security)
+- [Who it is for](#who-it-is-for)
+- [Status](#status)
 - [Architecture](#architecture)
 - [Install](#install)
 - [Quickstart](#quickstart)
@@ -78,7 +106,7 @@ Trust boundaries: the model never talks to tools; every proposal crosses the par
 
 Prerequisites:
 
-- Windows 10/11 (64-bit)
+- Windows 10/11 or Linux x64/arm64 for build/test and command-desk development
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
 - (Optional) a local GGUF model and a llama.cpp runtime build for local model serving
 
@@ -89,6 +117,8 @@ dotnet build CyberSopHarness.slnx --configuration Release
 ```
 
 Model weights and the llama.cpp engine are **user-staged, not bundled** — see [Configuration](#configuration).
+
+Windows DPAPI currently protects provenance keys and persisted secrets. Therefore, governed runs are Windows-only today even though the core builds and the desk shell validate on Linux.
 
 ## Quickstart
 
@@ -102,6 +132,16 @@ dotnet run --project src/CyberSopHarness.App -- status          # runtime state 
 
 `run` prints the live pipeline — `READY → PROBE → POLICY → PERMIT → DISPATCH → PROVENANCE → VERIFIED → REPORT → JOURNAL → STOPPED` — and persists `data/evidence.journal` plus signed artifacts under `data/artifacts/`.
 
+### Command desk
+
+Start the fixed-verb operations shell without enabling free-form terminal access:
+
+```bash
+dotnet run --project src/CyberSopHarness.App -- desk
+```
+
+The desk supports `action`, `doctor`, `emergency`, `engagement`, `evidence`, `exit`, `help`, `model`, `proposal`, `report`, and `status`. Use `--json` for machine-readable output, `--no-color` to disable styling explicitly, `--no-history` for ephemeral sessions, and `--command 'status\nhelp'` for scripted checks. A critical result engages emergency stop and ends the REPL.
+
 ## CLI reference
 
 | Command | Description |
@@ -112,6 +152,7 @@ dotnet run --project src/CyberSopHarness.App -- status          # runtime state 
 | `secret set|get|clear|rotate <name>` | DPAPI-protected secret custody |
 | `model list` / `info <name>` / `select <name>` | Staged model catalog and active selection |
 | `status` | Selection, runtime, evidence, and endpoint state |
+| `desk [options]` | Fixed-verb command shell with plain/ANSI rendering, bounded history, JSON mode, and emergency stop |
 
 ## Configuration
 
@@ -125,14 +166,15 @@ Every governed run produces: a `DurableEvidenceJournal` with recovery and tamper
 
 ## Tests
 
-33 deterministic offline tests across two self-running suites (0 real-model opt-ins in CI):
+40 deterministic offline tests across three self-running suites (0 real-model opt-ins in CI):
 
 ```powershell
 dotnet run --project tests/Phase2.Tests --configuration Release  # 10 tests: policy, permits, workers, job objects
 dotnet run --project tests/Phase3.Tests --configuration Release  # 23 tests: providers, evidence, provenance, bootstrap
+dotnet run --project tests/CommandDesk.Tests --configuration Release  # 7 tests: input, rendering, history, stop behavior
 ```
 
-A real-model runtime smoke test is opt-in via `PHASE3B_REAL_MODEL=1` and never runs in CI. CI (windows-latest) builds with `TreatWarningsAsErrors` and runs both suites on every push/PR.
+A real-model runtime smoke test is opt-in via `PHASE3B_REAL_MODEL=1` and never runs in CI. CI builds on Windows and Linux with warnings treated as errors, runs all 40 deterministic tests, and rejects changes that cannot meet those gates.
 
 ## Documentation
 

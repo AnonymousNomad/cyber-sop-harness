@@ -1,0 +1,28 @@
+name: Feature request
+description: Propose a capability that preserves authorization, containment, evidence, and verification.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Operational problem
+      description: Describe the authorized workflow and why existing fixed-verb controls are insufficient.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Define inputs, authority boundary, typed state, evidence events, and failure behavior.
+    validations:
+      required: true
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Acceptance constraints
+      options:
+        - label: The feature is for authorized defensive testing only.
+        - label: It fails closed when authorization or containment is ambiguous.
+        - label: It includes deterministic offline tests and documentation.
+    validations:
+      required: true
