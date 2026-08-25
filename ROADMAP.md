@@ -169,3 +169,22 @@ Gate:
 ## Phase Transition Rule
 
 Do not begin a later phase when any gate is failed, skipped, or supported only by a model claim. Fix the root cause, rerun the verification battery, and append the result to `agent_notes.Md`.
+
+## Realistic Timeline to Production Gate
+
+Based on current progress and collaborator feedback:
+
+| Phase | Estimated Duration | Dependencies |
+|---|---|---|
+| Phase 3 completion (methodology engine + more adapters) | 2-3 weeks | None; in progress |
+| Phase 4 (mobile control + live target containment) | 4-6 weeks | Phase 3 gate |
+| Independent verification + threat-model review | 2-3 weeks | Phase 4 gate |
+| **Total to production gate** | **8-12 weeks** | Assuming no blockers |
+
+Key assumptions:
+- No blockers from redistribution approval (currently pending)
+- Live-target testing requires authorized engagement (not scheduled)
+- Mobile control plane is UI work, not security-critical
+- Threat-model review is external, not self-assessed
+
+The gap between "development preview" and "production gate" is real and significant. The 44 tests prove contracts work under deterministic conditions. Live-target testing will expose hallucination-induced payloads, malformed responses, and timing issues that fixtures cannot simulate.

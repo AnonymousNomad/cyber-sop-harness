@@ -33,11 +33,11 @@ This project is for authorized work only. It does not authorize targets, bypass 
 
 | Capability | Available today |
 |---|---|
-| Governed offline pipeline | Working Windows/Linux CLI path through policy, permit, synthetic-tool dispatch, verification, report, journal, and replay tests |
+| Governed offline pipeline | Working Windows/Linux CLI path through policy, permit, synthetic-tool dispatch, verification, report, journal, and replay tests; zero live-target executions to date |
 | Command desk | Fixed-verb terminal surface with doctor, status, help, model inspection, JSON mode, bounded history, sanitization, and emergency stop; Phase B views are in progress |
-| Cross-platform builds | Linux/arm64 build and 44-test validation pass locally; custody uses DPAPI on Windows and a passphrase-protected key file elsewhere |
+| Cross-platform builds | Linux/arm64 build and 44-test validation pass locally; custody uses DPAPI on Windows and a passphrase-protected key file elsewhere; .NET chosen for compile-time safety in a governance framework where type errors mean bypasses |
 | Local model runtime | LFM2.5 can be hash-pinned and served from the desk at 2K context in development preview; loopback-only runtime is offline with tools disabled |
-| Security tools | One read-only HTTP header-inspection adapter exists for authorized desk dispatch with DNS pinning, redirect/proxy/cookie blocking, bounded output, sensitive-header redaction, evidence, and provenance |
+| Security tools | One read-only HTTP header-inspection adapter exists for authorized desk dispatch with DNS pinning, redirect/proxy/cookie blocking, bounded output, sensitive-header redaction, evidence, and provenance; more adapters via the typed `IToolAdapter` interface |
 | Production gate | No release has passed live-target containment, operator acceptance, threat-model review, and independent evidence verification |
 
 Do not point this software at infrastructure you are not explicitly authorized to assess.
@@ -63,6 +63,9 @@ Do not point this software at infrastructure you are not explicitly authorized t
 - [CLI reference](#cli-reference)
 - [Configuration](#configuration)
 - [Evidence and provenance](#evidence-and-provenance)
+- [Library Usage](#library-usage)
+- [Provider Extensibility](#provider-extensibility)
+- [Test Coverage Notes](#test-coverage-notes)
 - [Tests](#tests)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
@@ -205,3 +208,98 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for build/t
 ## License
 
 [MIT](LICENSE) — SPDX: `MIT`
+
+## Library Usage
+
+The `CyberSopHarness.Core` assembly is the public API surface. The CLI is a thin wrapper. You can embed the governance pipeline directly:
+
+```csharp
+using CyberSopHarness.Core;
+
+// 1. Create a policy engine with your capability registry and trust store
+var capabilities = new CapabilityRegistry();
+capabilities.Register(new CapabilityManifest("http.inspect", RiskClass.R0, 
+    new[] { "https://target.example.com" }, "unprivileged", true, 
+    Array.Empty<string>(), new[] { "http_metadata" }, 
+    TimeSpan.FromSeconds(15), 64 * 1024, false, true));
+capabilities.Freeze();
+
+var trustStore = new AuthorizationTrustStore();
+trustStore.Register("owner-1", ownerPublicKey);
+trustStore.Freeze();
+
+var policy = new PolicyEngine(capabilities, trustStore);
+
+// 2. Evaluate an action request against an engagement manifest
+var result = policy.Evaluate(actionRequest, engagementManifest, null);
+if (result.Decision != PolicyDecision.Allow) 
+    throw new InvalidOperationException("Blocked: " + result.Reason);
+
+// 3. Issue a one-use permit
+using var issuer = new PermitIssuer(policy);
+var permit = issuer.Issue(actionRequest, engagementManifest, "my-worker");
+
+// 4. Dispatch through the typed tool broker
+var broker = new ToolBroker(registry, evidence, issuer, provenance);
+var outcome = await broker.ExecuteAsync(envelope, engagementManifest, 
+    result, permit, "my-worker", null, CancellationToken.None);
+
+// 5. Verify evidence
+var verified = provenance.Verify(outcome.Provenance, outcome.Evidence, 
+    engagementManifest);
+```
+
+Key types for embedding:
+- `PolicyEngine` — evaluates actions against capabilities, scope, and authorization
+- `PermitIssuer` — creates cryptographically signed one-use permits
+- `ToolBroker` — dispatches permits to typed tool adapters with evidence capture
+- `EvidenceLedger` / `DurableEvidenceJournal` — append-only evidence storage
+- `ProvenanceAuthority` — signs and verifies evidence chains
+- `IModelProviderAdapter` — implement this to add new model providers
+- `IToolAdapter` — implement this to add new tool adapters
+
+## Provider Extensibility
+
+The `IModelProviderAdapter` interface (`src/CyberSopHarness.Core/Phase3Contracts.cs:85`) is the extension point for new model providers:
+
+```csharp
+public interface IModelProviderAdapter
+{
+    ProviderDescriptor Descriptor { get; }
+    Task<ProviderProposal> ProposeAsync(string prompt, 
+        AuthorizationManifest manifest, 
+        CancellationToken cancellationToken);
+}
+```
+
+Three implementations exist today:
+- `LocalModelProviderAdapter` — serves GGUF models via llama.cpp
+- `LoopbackEndpointProviderAdapter` — proxies to a local HTTP model server
+- `ExternalApiProviderAdapter` — connects to remote model APIs with consent gating
+
+To add a new provider (vLLM, Ollama, custom endpoint):
+1. Implement `IModelProviderAdapter` with your descriptor and proposal logic
+2. Register it in the provider selection wizard
+3. The policy engine, permit system, and evidence chain work unchanged
+
+The wizard and secret custody are coupled to provider identity by design — you cannot silently swap providers without operator consent. This is a security feature, not a limitation.
+
+## Test Coverage Notes
+
+The 44 tests are contract and behavior tests, not broad model-output snapshots. They cover:
+- Policy engine decisions (allow, block, approval-required)
+- Permit lifecycle (issue, consume, expire, replay, scope mismatch)
+- Redirect chain scope validation
+- Evidence journal integrity and tamper detection
+- Provenance key rotation and offline verification
+- Model pinning and resource gates
+- HTTP header inspection with DNS pinning and sensitive-header redaction
+- Engagement manifest validation and signature verification
+
+What they do NOT cover (and why):
+- Real model outputs (tested opt-in via `PHASE3B_REAL_MODEL=1`)
+- Live target execution (requires authorized engagement)
+- Mobile control plane (Phase 5)
+- Production containment (requires threat-model review)
+
+The gap between "44 tests pass" and "production-ready" is real. The tests prove the contracts work under deterministic conditions. Live-target testing will expose hallucination-induced payloads, malformed responses, and timing issues that fixtures cannot simulate.
