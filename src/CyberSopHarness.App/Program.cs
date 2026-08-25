@@ -289,6 +289,134 @@ internal static class Program
                 "tools=disabled bind=loopback offline=true");
         }
 
+        async Task<CommandDeskResult> EngagementInit(string[] initArgs)
+        {
+            var outputDir = ArgumentValue(initArgs, "--output-dir") ?? Path.Combine(dataDir, "engagement");
+            var target = ArgumentValue(initArgs, "--target");
+            if (string.IsNullOrWhiteSpace(target))
+                return CommandDeskResult.UsageError("engagement init requires --target (e.g. https://target.example.com)");
+
+            Directory.CreateDirectory(outputDir);
+            var keyPath = Path.Combine(outputDir, "owner-private-key.pem");
+            var publicKeyPath = Path.Combine(outputDir, "owner-public-key.pem");
+
+            if (File.Exists(keyPath))
+                return CommandDeskResult.Warning("engagement keys already exist", $"key_path={keyPath}");
+
+            using var rsa = System.Security.Cryptography.RSA.Create(2048);
+            await File.WriteAllTextAsync(keyPath, rsa.ExportRSAPrivateKeyPem(), CancellationToken.None);
+            await File.WriteAllTextAsync(publicKeyPath, rsa.ExportRSAPublicKeyPem(), CancellationToken.None);
+
+            var now = DateTimeOffset.UtcNow;
+            Uri targetUri;
+            try { targetUri = new Uri(target); }
+            catch (UriFormatException) { return CommandDeskResult.Failure("invalid target URL", target); }
+
+            var manifest = new AuthorizationManifest
+            {
+                EngagementId = $"engagement-{now:yyyyMMdd-HHmmss}",
+                EngagementMode = EngagementMode.Authorized,
+                Authorization = new AuthorizationProof(
+                    Owner: "owner",
+                    Operator: Environment.UserName,
+                    ArtifactRef: $"auth-{Guid.NewGuid():N}",
+                    SignatureBase64: "",
+                    PublicKeyPem: "",
+                    SignedPayload: ""),
+                Scope = new ScopeDefinition(
+                    Allow: [targetUri.Host],
+                    Deny: [],
+                    RedirectPolicy: "block",
+                    ThirdPartyPolicy: "block",
+                    WildcardPolicy: "exact-only"),
+                TimeWindow = new TimeWindow(now.AddMinutes(-1), now.AddHours(8), "UTC", []),
+                Methods = new MethodDefinition(
+                    Allowed: [HttpHeaderInspectTool.CapabilityRef, DnsReverseLookupTool.CapabilityRef],
+                    Prohibited: []),
+                AssetCriticality = new AssetCriticalityDefinition("unknown", new Dictionary<string, string>()),
+                DataHandling = new DataHandlingDefinition("public-target-metadata", "required", "phase"),
+                EscalationContacts = [new EscalationContact("owner", "email", "security@example.invalid")],
+                CredentialPolicy = new CredentialPolicy([], false, "none"),
+                RateLimits = new RateLimitDefinition(10, 5, 4096),
+                Cleanup = new CleanupDefinition(true, Environment.UserName, "no persistent state"),
+                StopConditions = ["scope-mismatch", "credential-anomaly", "policy-failure"]
+            };
+
+            var signed = manifest with { Authorization = AuthorizationSigner.Sign(manifest, rsa) };
+
+            var jsonOptions = new System.Text.Json.JsonSerializerOptions
+            {
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower,
+                Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+                WriteIndented = true
+            };
+            var manifestPath = Path.Combine(outputDir, "engagement-manifest.json");
+            await File.WriteAllTextAsync(manifestPath, System.Text.Json.JsonSerializer.Serialize(signed, jsonOptions), CancellationToken.None);
+
+            var proposals = new (string name, ActionRequest action)[]
+            {
+                ("http-headers", new ActionRequest
+                {
+                    RunId = $"run-{Guid.NewGuid():N}"[..16],
+                    ActionId = $"action-{Guid.NewGuid():N}"[..16],
+                    Phase = "recon",
+                    TargetRef = $"{targetUri.Scheme}://{targetUri.Authority}/",
+                    CapabilityRef = HttpHeaderInspectTool.CapabilityRef,
+                    Arguments = new Dictionary<string, string> { ["method"] = "GET" },
+                    Purpose = "capture response headers for technology fingerprinting",
+                    ExpectedObservation = "HTTP status and headers",
+                    RiskClass = RiskClass.R0,
+                    ScopeRef = signed.Scope.RedirectPolicy,
+                    AuthorizationRef = signed.Authorization.ArtifactRef,
+                    MethodologyRefs = ["web-passive-baseline-v1"],
+                    ResolvedAddresses = []
+                }),
+                ("dns-reverse", new ActionRequest
+                {
+                    RunId = $"run-{Guid.NewGuid():N}"[..16],
+                    ActionId = $"action-{Guid.NewGuid():N}"[..16],
+                    Phase = "recon",
+                    TargetRef = targetUri.Host,
+                    CapabilityRef = DnsReverseLookupTool.CapabilityRef,
+                    Purpose = "reverse DNS lookup for infrastructure mapping",
+                    RiskClass = RiskClass.R1,
+                    ScopeRef = signed.Scope.RedirectPolicy,
+                    AuthorizationRef = signed.Authorization.ArtifactRef,
+                    MethodologyRefs = ["dns-passive-baseline-v1"],
+                    ResolvedAddresses = []
+                })
+            };
+
+            var proposalPaths = new List<string>();
+            foreach (var (name, actionRequest) in proposals)
+            {
+                var proposalPath = Path.Combine(outputDir, $"proposal-{name}.json");
+                await File.WriteAllTextAsync(proposalPath,
+                    System.Text.Json.JsonSerializer.Serialize(actionRequest, new System.Text.Json.JsonSerializerOptions
+                    {
+                        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower,
+                        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+                        WriteIndented = true
+                    }), CancellationToken.None);
+                proposalPaths.Add(proposalPath);
+            }
+
+            return CommandDeskResult.Success(
+                "engagement initialized",
+                $"output_dir={outputDir}",
+                $"manifest={manifestPath}",
+                $"public_key={publicKeyPath}",
+                "private_key stored locally; never share or commit it",
+                $"proposals: {string.Join(", ", proposalPaths.Select(Path.GetFileName))}",
+                "",
+                "Next steps:",
+                "  1. Resolve your target's IP address (e.g. dig +short example.com)",
+                "  2. Add the resolved IP to proposal ResolvedAddresses",
+                "  3. Validate: engagement validate (requires --engagement-manifest and --owner-public-key flags)",
+                "  4. Submit: proposal submit --file <proposal.json>",
+                "Note: hostname targets require resolved IPs in authorized mode (anti-DNS-rebinding)");
+        }
+
         CommandDeskResult ValidateEngagement()
         {
             if (engagementManifest is null) return CommandDeskResult.UsageError("engagement validate requires --engagement-manifest");
@@ -350,6 +478,8 @@ internal static class Program
                 result = invocation.Verb.ToLowerInvariant() switch
                 {
                     "help" => CommandDeskResult.Info("Registered verbs", registry.Verbs.Select(verb => $"{verb.Name}: {verb.Summary}").ToArray()),
+                    "engagement" when invocation.Arguments.ElementAtOrDefault(0)?.Equals("init", StringComparison.OrdinalIgnoreCase) == true =>
+                        await EngagementInit(invocation.Arguments.ToArray()),
                     "engagement" when invocation.Arguments.ElementAtOrDefault(0)?.Equals("validate", StringComparison.OrdinalIgnoreCase) == true => ValidateEngagement(),
                     "proposal" when invocation.Arguments.ElementAtOrDefault(0)?.Equals("validate", StringComparison.OrdinalIgnoreCase) == true =>
                         ArgumentValue(invocation.Arguments.ToArray(), "--file") is { Length: > 0 } proposalPath
