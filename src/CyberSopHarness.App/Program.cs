@@ -152,8 +152,8 @@ internal static class Program
                 return CommandDeskResult.Failure("model proposal was rejected", parseReason ?? "invalid action request");
             var actionValidation = ActionRequestValidator.Validate(action);
             if (!actionValidation.IsValid) return CommandDeskResult.Failure("proposal failed action validation", actionValidation.Errors.ToArray());
-            if (action.CapabilityRef != HttpHeaderInspectTool.CapabilityRef)
-                return CommandDeskResult.Failure("proposal dispatch is unavailable for this capability", $"registered_dispatch={HttpHeaderInspectTool.CapabilityRef}");
+            if (action.CapabilityRef is not (HttpHeaderInspectTool.CapabilityRef or DnsReverseLookupTool.CapabilityRef))
+                return CommandDeskResult.Failure("proposal dispatch is unavailable for this capability", $"registered={HttpHeaderInspectTool.CapabilityRef},{DnsReverseLookupTool.CapabilityRef}");
 
             var capabilities = CreateDeskCapabilities();
             var policy = new PolicyEngine(capabilities, CreateOwnerTrustStore(engagementManifest, ownerKeyPem)).Evaluate(action, engagementManifest, null);
@@ -188,26 +188,44 @@ internal static class Program
                 "0.1.0-desk",
                 Canonicalization.Sha256Hex("cyber-sop-harness-desk-build"),
                 ProvenanceKeyCustody.Fingerprint(signingKey)), signingKey);
-            var origin = targetUri.GetLeftPart(UriPartial.Authority).TrimEnd('/') + "/";
-            var toolManifest = new ToolCapabilityManifest(
-                "http-header-inspect",
-                "1.0",
-                HttpHeaderInspectTool.CapabilityRef,
-                "unprivileged",
-                true,
-                new[] { origin },
-                new[] { "http_metadata" },
-                true,
-                new[] { "raw", "redacted", "observation" },
-                true,
-                TimeSpan.FromSeconds(15),
-                64 * 1024);
-            await using var adapter = new HttpHeaderInspectTool("http-header-inspect", "1.0", action.ResolvedAddresses.ToArray());
+            ToolCapabilityManifest toolManifest;
+            IToolAdapter toolAdapterInstance;
+            bool ownsDisposable = false;
+            if (action.CapabilityRef == DnsReverseLookupTool.CapabilityRef)
+            {
+                toolManifest = new ToolCapabilityManifest(
+                    "dns-reverse-lookup", "1.0", DnsReverseLookupTool.CapabilityRef,
+                    "unprivileged", true, Array.Empty<string>(), new[] { "http_metadata" },
+                    true, new[] { "raw", "redacted", "observation" }, true,
+                    TimeSpan.FromSeconds(10), 4096);
+                toolAdapterInstance = new DnsReverseLookupTool();
+            }
+            else
+            {
+                var origin = targetUri.GetLeftPart(UriPartial.Authority).TrimEnd('/') + "/";
+                toolManifest = new ToolCapabilityManifest(
+                    "http-header-inspect", "1.0", HttpHeaderInspectTool.CapabilityRef,
+                    "unprivileged", true, new[] { origin }, new[] { "http_metadata" },
+                    true, new[] { "raw", "redacted", "observation" }, true,
+                    TimeSpan.FromSeconds(15), 64 * 1024);
+                var httpAdapter = new HttpHeaderInspectTool("http-header-inspect", "1.0", action.ResolvedAddresses.ToArray());
+                toolAdapterInstance = httpAdapter;
+                ownsDisposable = true;
+            }
             var registry = new ToolRegistry();
-            registry.Register(toolManifest, adapter);
+            registry.Register(toolManifest, toolAdapterInstance);
             registry.Freeze();
             var broker = new ToolBroker(registry, evidence, issuer, provenance);
-            var outcome = await broker.ExecuteAsync(envelope, engagementManifest, policy, permit, "desk-http-worker", null, CancellationToken.None);
+            ToolExecutionOutcome outcome;
+            try
+            {
+                outcome = await broker.ExecuteAsync(envelope, engagementManifest, policy, permit, "desk-http-worker", null, CancellationToken.None);
+            }
+            finally
+            {
+                if (ownsDisposable && toolAdapterInstance is IAsyncDisposable asyncDisposable)
+                    await asyncDisposable.DisposeAsync();
+            }
             var provenanceVerified = provenance.Verify(outcome.Provenance, outcome.Evidence, engagementManifest);
             if (!outcome.Dispatched || !provenanceVerified)
                 return CommandDeskResult.Failure("governed dispatch did not complete safely", [
@@ -654,6 +672,18 @@ internal static class Program
             new[] { "http_metadata" },
             TimeSpan.FromSeconds(15),
             64 * 1024,
+            false,
+            true));
+        registry.Register(new CapabilityManifest(
+            DnsReverseLookupTool.CapabilityRef,
+            RiskClass.R1,
+            new[] { "*" },
+            "unprivileged",
+            true,
+            Array.Empty<string>(),
+            new[] { "http_metadata" },
+            TimeSpan.FromSeconds(10),
+            4096,
             false,
             true));
         registry.Freeze();

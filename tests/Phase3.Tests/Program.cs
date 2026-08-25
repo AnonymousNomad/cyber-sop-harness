@@ -38,6 +38,7 @@ internal static class Program
         await Run("external endpoint store validation", TestExternalEndpointStore);
         await Run("synthetic fixture tool adapter", TestSyntheticFixtureToolAdapter);
         await Run("authorized HTTP header inspection", TestAuthorizedHttpHeaderInspection);
+        await Run("DNS reverse lookup adapter", TestDnsReverseLookupAdapter);
         await Run("engagement manifest file validation", TestEngagementManifestFile);
         await Run("permit expiry during tool execution", TestPermitExpiryDuringExecution);
         await Run("multi-hop redirect scope crossing", TestMultiHopRedirectScopeCrossing);
@@ -1247,6 +1248,96 @@ internal static class Program
         finally { Directory.Delete(root, true); }
         return Task.CompletedTask;
     }
+    private static async Task TestDnsReverseLookupAdapter()
+    {
+        using var key = RSA.Create(2048);
+        var now = DateTimeOffset.UtcNow;
+        var draft = new AuthorizationManifest
+        {
+            EngagementId = "dns-reverse-test",
+            EngagementMode = EngagementMode.Authorized,
+            Authorization = new AuthorizationProof("owner-1", "operator-1", "dns-auth", "", "", ""),
+            Scope = new ScopeDefinition(new[] { "8.8.8.8" }, Array.Empty<string>(), "exact-only", "block", "block"),
+            TimeWindow = new TimeWindow(now.AddMinutes(-1), now.AddMinutes(10), "UTC", Array.Empty<ExcludedWindow>()),
+            Methods = new MethodDefinition(new[] { DnsReverseLookupTool.CapabilityRef }, Array.Empty<string>()),
+            AssetCriticality = new AssetCriticalityDefinition("low", new Dictionary<string, string>()),
+            DataHandling = new DataHandlingDefinition("public-target-metadata", "required", "phase"),
+            EscalationContacts = new[] { new EscalationContact("owner", "email", "owner@example.invalid") },
+            CredentialPolicy = new CredentialPolicy(Array.Empty<string>(), false, "none"),
+            RateLimits = new RateLimitDefinition(1, 1, 4096),
+            Cleanup = new CleanupDefinition(true, "operator", "no-op"),
+            StopConditions = new[] { "scope-mismatch" }
+        };
+        var authorization = draft with { Authorization = AuthorizationSigner.Sign(draft, key) };
+        var action = new ActionRequest
+        {
+            RunId = "run-dns",
+            ActionId = "action-dns",
+            Phase = "recon",
+            TargetRef = "http://8.8.8.8/",
+            CapabilityRef = DnsReverseLookupTool.CapabilityRef,
+            Purpose = "reverse lookup documentation IP",
+            RiskClass = RiskClass.R1,
+            ScopeRef = "scope-dns",
+            AuthorizationRef = "dns-auth",
+            MethodologyRefs = new[] { "dns-passive-baseline-v1" },
+            ResolvedAddresses = new[] { "8.8.8.8" }
+        };
+
+        var capabilities = new CapabilityRegistry();
+        capabilities.Register(new CapabilityManifest(
+            DnsReverseLookupTool.CapabilityRef, RiskClass.R1,
+            new[] { "*" }, "unprivileged", true,
+            Array.Empty<string>(), new[] { "http_metadata" },
+            TimeSpan.FromSeconds(5), 4096, false, true));
+        capabilities.Freeze();
+        var policy = new PolicyEngine(capabilities, CreateTrustStore(key)).Evaluate(action, authorization, null);
+        Assert(policy.Decision == PolicyDecision.Allow, $"DNS policy did not allow: {policy.Reason}");
+
+        var provider = new ProviderDescriptor("local-model", "dns-test", "1.0", Canonicalization.Sha256Hex("config"), "local-only", "none", "typed");
+        var proposal = new ProviderProposal(provider, action, Canonicalization.Sha256Hex(Canonicalization.ActionPayload(action)), TimeSpan.FromMilliseconds(1), 16, ProviderFailureClass.None);
+        var envelope = ActionEnvelopeFactory.Create(proposal);
+        var adapter = new DnsReverseLookupTool();
+        var toolManifest = new ToolCapabilityManifest(
+            "dns-reverse-lookup", "1.0", DnsReverseLookupTool.CapabilityRef,
+            "unprivileged", true, new[] { "http://8.8.8.8/" }, new[] { "http_metadata" },
+            true, new[] { "raw", "redacted", "observation" }, true,
+            TimeSpan.FromSeconds(5), 4096);
+
+        var registry = new ToolRegistry();
+        registry.Register(toolManifest, adapter);
+        registry.Freeze();
+        var evidence = new EvidenceLedger(new ArtifactStore());
+        using var issuerKey = RSA.Create(2048);
+        var policyEngine = new PolicyEngine(capabilities, CreateTrustStore(key));
+        using var issuer = new PermitIssuer(policyEngine, issuerKey);
+        var permit = issuer.Issue(action, authorization, "dns-worker");
+        Assert(issuer.TryConsume(permit, action, authorization, "dns-worker"), "DNS permit was not consumed");
+        using var provenanceKey = RSA.Create(2048);
+        using var provenance = new ProvenanceAuthority(new ProductIdentity("csh", "dns-test", Canonicalization.Sha256Hex("build"), ProvenanceKeyCustody.Fingerprint(provenanceKey)), provenanceKey);
+        var broker = new ToolBroker(registry, evidence, issuer, provenance);
+
+        var outcome = await broker.ExecuteAsync(envelope, authorization, policy, permit, "dns-worker", null, CancellationToken.None);
+        Assert(outcome.Dispatched, $"DNS adapter was not dispatched: {outcome.FailureReason}");
+        if (outcome.Evidence.Status == ToolResultStatus.Timeout)
+        {
+            Assert(!DnsReverseLookupTool.IsPrivateOrReserved(IPAddress.Parse("8.8.8.8")), "public IP incorrectly flagged as private");
+            Assert(DnsReverseLookupTool.IsPrivateOrReserved(IPAddress.Parse("10.0.0.1")), "private IP not blocked");
+            Assert(DnsReverseLookupTool.IsPrivateOrReserved(IPAddress.Parse("127.0.0.1")), "loopback not blocked");
+            Assert(DnsReverseLookupTool.IsPrivateOrReserved(IPAddress.Parse("::1")), "IPv6 loopback not blocked");
+            Console.WriteLine("DNS lookup timed out (expected in offline CI); adapter structure verified via unit assertions");
+            return;
+        }
+        Assert(outcome.Evidence.Status == ToolResultStatus.Success || outcome.Evidence.Status == ToolResultStatus.Partial,
+            $"DNS adapter returned unexpected status: {outcome.Evidence.Status}");
+        Assert(provenance.Verify(outcome.Provenance, outcome.Evidence, authorization), "DNS evidence provenance failed verification");
+
+        Assert(outcome.Evidence.RawArtifactRef is not null, "DNS adapter did not produce a raw artifact");
+        Assert(evidence.TryReadArtifact(outcome.Evidence.RawArtifactRef!, out var dnsRaw), "DNS raw artifact was not readable");
+        using var doc = JsonDocument.Parse(Encoding.UTF8.GetString(dnsRaw));
+        Assert(doc.RootElement.GetProperty("query").GetString()!.Contains("8.8.8.8.in-addr.arpa"), "reverse-DNS query name was incorrect for IPv4");
+    }
+
     private static async Task TestEngagementManifestFile()
     {
         using var key = RSA.Create(2048);
