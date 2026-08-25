@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Globalization;
+using System.Text.Json;
 using CyberSopHarness.Core;
 
 internal static class Program
@@ -116,6 +117,10 @@ internal static class Program
         var manifests = await StagedModelCatalog.LoadAsync(modelsDirectory, CancellationToken.None);
         var modelControl = new CommandDeskModelControl(manifests, selectionStore);
         LocalModelRuntime? deskRuntime = null;
+        var engagementPath = ArgumentValue(args, "--engagement-manifest");
+        var engagementManifest = engagementPath is null
+            ? null
+            : await EngagementManifestFile.LoadAsync(Path.GetFullPath(engagementPath), CancellationToken.None);
         var historyDirectory = args.Contains("--no-history", StringComparer.OrdinalIgnoreCase) ? null : Path.Combine(dataDir, "command-history");
         var replOptions = new CommandDeskReplOptions();
 
@@ -165,6 +170,48 @@ internal static class Program
                 "tools=disabled bind=loopback offline=true");
         }
 
+        CommandDeskResult ValidateEngagement()
+        {
+            if (engagementManifest is null) return CommandDeskResult.UsageError("engagement validate requires --engagement-manifest");
+            var keyPath = ArgumentValue(args, "--owner-public-key");
+            if (keyPath is null) return CommandDeskResult.UsageError("engagement validate requires --owner-public-key");
+            var validation = EngagementManifestFile.Validate(engagementManifest, File.ReadAllText(keyPath));
+            return validation.IsValid
+                ? CommandDeskResult.Success(
+                    "engagement authorization is valid",
+                    $"engagement={engagementManifest.EngagementId}",
+                    $"mode={engagementManifest.EngagementMode}",
+                    $"expires={engagementManifest.TimeWindow.ExpiresAt:O}",
+                    "no target interaction performed")
+                : CommandDeskResult.Failure("engagement authorization is invalid", validation.Errors.ToArray());
+        }
+
+        CommandDeskResult ValidateProposal(string path)
+        {
+            if (engagementManifest is null) return CommandDeskResult.UsageError("proposal validation requires --engagement-manifest");
+            var keyPath = ArgumentValue(args, "--owner-public-key");
+            if (keyPath is null) return CommandDeskResult.UsageError("proposal validation requires --owner-public-key");
+            var trustValidation = EngagementManifestFile.Validate(engagementManifest, File.ReadAllText(keyPath));
+            if (!trustValidation.IsValid) return CommandDeskResult.Failure("engagement authorization is invalid", trustValidation.Errors.ToArray());
+            var proposalText = File.ReadAllText(path);
+            if (!ActionProposalParser.TryParse(proposalText, out var action, out var parseReason) || action is null)
+                return CommandDeskResult.Failure("model proposal was rejected", parseReason ?? "invalid action request");
+            var policy = new PolicyEngine(CreateDeskCapabilities(), CreateOwnerTrustStore(engagementManifest, File.ReadAllText(keyPath))).Evaluate(action, engagementManifest, null);
+            return policy.Decision switch
+            {
+                PolicyDecision.Allow => CommandDeskResult.Success(
+                    "proposal passed policy validation; execution custody is not wired on this platform yet",
+                    $"policy={policy.PolicyRef}:{policy.PolicyVersion}",
+                    $"action_hash={policy.ActionHash}",
+                    $"capability={policy.CapabilityRef}"),
+                PolicyDecision.ApprovalRequired => CommandDeskResult.Warning(
+                    "proposal requires a valid signed approval before dispatch",
+                    $"reason={policy.Reason}",
+                    $"action_hash={policy.ActionHash}"),
+                _ => CommandDeskResult.Failure("proposal blocked by policy", policy.Reason, $"action_hash={policy.ActionHash}")
+            };
+        }
+
         async Task<CommandDeskExecution> Handler(CommandDeskInvocation invocation, CommandDeskState state, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -184,6 +231,13 @@ internal static class Program
                 result = invocation.Verb.ToLowerInvariant() switch
                 {
                     "help" => CommandDeskResult.Info("Registered verbs", registry.Verbs.Select(verb => $"{verb.Name}: {verb.Summary}").ToArray()),
+                    "engagement" when invocation.Arguments.ElementAtOrDefault(0)?.Equals("validate", StringComparison.OrdinalIgnoreCase) == true => ValidateEngagement(),
+                    "proposal" when invocation.Arguments.ElementAtOrDefault(0)?.Equals("validate", StringComparison.OrdinalIgnoreCase) == true =>
+                        ArgumentValue(invocation.Arguments.ToArray(), "--file") is { Length: > 0 } proposalPath
+                            ? ValidateProposal(Path.GetFullPath(proposalPath))
+                            : CommandDeskResult.UsageError("proposal validate requires --file"),
+                    "proposal" when invocation.Arguments.ElementAtOrDefault(0)?.Equals("submit", StringComparison.OrdinalIgnoreCase) == true =>
+                        CommandDeskResult.Failure("proposal execution requires portable provenance-key custody; dispatch is intentionally unavailable on this platform"),
                     "doctor" => DoctorResult(state, dataDir, selection?.ProviderRef, endpoint?.ToString()),
                     "emergency" when invocation.Arguments.Count == 1 && invocation.Arguments[0].Equals("status", StringComparison.OrdinalIgnoreCase) =>
                         state.EmergencyStopped
@@ -471,6 +525,47 @@ internal static class Program
             StopConditions = new[] { "scope-mismatch", "relay-loss" }
         };
         return draft with { Authorization = AuthorizationSigner.Sign(draft, key) };
+    }
+
+    private static CapabilityRegistry CreateDeskCapabilities()
+    {
+        var registry = new CapabilityRegistry();
+        registry.Register(new CapabilityManifest(
+            "fixture.inspect",
+            RiskClass.R0,
+            new[] { "http://127.0.0.1:8080/" },
+            "unprivileged",
+            true,
+            Array.Empty<string>(),
+            new[] { "synthetic" },
+            TimeSpan.FromSeconds(10),
+            1024,
+            false,
+            true));
+        registry.Register(new CapabilityManifest(
+            HttpHeaderInspectTool.CapabilityRef,
+            RiskClass.R0,
+            new[] { "*" },
+            "unprivileged",
+            true,
+            new[] { "https://policy-gated.invalid" },
+            new[] { "http_metadata" },
+            TimeSpan.FromSeconds(15),
+            64 * 1024,
+            false,
+            true));
+        registry.Freeze();
+        return registry;
+    }
+
+    private static AuthorizationTrustStore CreateOwnerTrustStore(AuthorizationManifest manifest, string publicKeyPem)
+    {
+        using var publicKey = RSA.Create();
+        publicKey.ImportFromPem(publicKeyPem);
+        var trustStore = new AuthorizationTrustStore();
+        trustStore.Register(manifest.Authorization.Owner, publicKey);
+        trustStore.Freeze();
+        return trustStore;
     }
 
     private static async Task<IReadOnlyList<ProviderDisclosure>> BuildDisclosuresAsync(string dataDir, PersistentSecretStore secrets, ExternalEndpointStore endpointStore)

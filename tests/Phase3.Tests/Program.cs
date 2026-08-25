@@ -36,6 +36,8 @@ internal static class Program
         await Run("external provider full policy/evidence path", TestExternalProviderBrokerPath);
         await Run("external endpoint store validation", TestExternalEndpointStore);
         await Run("synthetic fixture tool adapter", TestSyntheticFixtureToolAdapter);
+        await Run("authorized HTTP header inspection", TestAuthorizedHttpHeaderInspection);
+        await Run("engagement manifest file validation", TestEngagementManifestFile);
         if (Environment.GetEnvironmentVariable("PHASE3B_REAL_MODEL") == "1") await Run("real Phase 3B local model runtime", TestRealModelRuntime);
         Console.WriteLine($"phase3_tests=passed count={_passed}");
         return 0;
@@ -1006,6 +1008,156 @@ internal static class Program
         finally
         {
             Directory.Delete(root, true);
+        }
+    }
+
+    private static async Task TestAuthorizedHttpHeaderInspection()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var target = $"http://127.0.0.1:{port}/";
+        using var key = RSA.Create(2048);
+        var now = DateTimeOffset.UtcNow;
+        var authorizationDraft = new AuthorizationManifest
+        {
+            EngagementId = "authorized-http-fixture",
+            EngagementMode = EngagementMode.Authorized,
+            Authorization = new AuthorizationProof("owner-1", "operator-1", "authorized-http-auth", string.Empty, string.Empty, string.Empty),
+            Scope = new ScopeDefinition(new[] { "127.0.0.1" }, Array.Empty<string>(), "exact-only", "block", "block"),
+            TimeWindow = new TimeWindow(now.AddMinutes(-1), now.AddMinutes(5), "UTC", Array.Empty<ExcludedWindow>()),
+            Methods = new MethodDefinition(new[] { HttpHeaderInspectTool.CapabilityRef }, Array.Empty<string>()),
+            AssetCriticality = new AssetCriticalityDefinition("low", new Dictionary<string, string>()),
+            DataHandling = new DataHandlingDefinition("public-target-metadata", "required", "phase"),
+            EscalationContacts = new[] { new EscalationContact("owner", "email", "owner@example.invalid") },
+            CredentialPolicy = new CredentialPolicy(Array.Empty<string>(), false, "none"),
+            RateLimits = new RateLimitDefinition(1, 1, 4096),
+            Cleanup = new CleanupDefinition(true, "operator-1", "http-header-inspection-cleanup"),
+            StopConditions = new[] { "scope-mismatch", "relay-loss" }
+        };
+        var authorization = authorizationDraft with { Authorization = AuthorizationSigner.Sign(authorizationDraft, key) };
+        var action = new ActionRequest
+        {
+            RunId = "run-http",
+            ActionId = "action-http",
+            Phase = "recon",
+            TargetRef = target,
+            CapabilityRef = HttpHeaderInspectTool.CapabilityRef,
+            Arguments = new Dictionary<string, string> { ["method"] = "GET" },
+            Purpose = "capture authorized response metadata",
+            RiskClass = RiskClass.R0,
+            ScopeRef = "scope-http",
+            AuthorizationRef = "authorized-http-auth",
+            MethodologyRefs = new[] { "web-passive-baseline-v1" },
+            ResolvedAddresses = new[] { "127.0.0.1" }
+        };
+        var capabilities = new CapabilityRegistry();
+        capabilities.Register(new CapabilityManifest(
+            HttpHeaderInspectTool.CapabilityRef,
+            RiskClass.R0,
+            new[] { target },
+            "unprivileged",
+            true,
+            new[] { target },
+            new[] { "http_metadata" },
+            TimeSpan.FromSeconds(2),
+            4096,
+            false,
+            true));
+        capabilities.Freeze();
+        var policy = new PolicyEngine(capabilities, CreateTrustStore(key)).Evaluate(action, authorization, null);
+        Assert(policy.Decision == PolicyDecision.Allow, $"authorized HTTP policy did not allow: {policy.Reason}");
+        var provider = new ProviderDescriptor("local-model", "lfm25-controller", "1.0", Canonicalization.Sha256Hex("model-config"), "local-only", "none", "typed");
+        var proposal = new ProviderProposal(provider, action, Canonicalization.Sha256Hex(Canonicalization.ActionPayload(action)), TimeSpan.FromMilliseconds(1), 16, ProviderFailureClass.None);
+        var envelope = ActionEnvelopeFactory.Create(proposal);
+        await using var adapter = new HttpHeaderInspectTool("http-header-inspect", "1.0", new[] { "127.0.0.1" });
+        var toolManifest = new ToolCapabilityManifest(
+            "http-header-inspect",
+            "1.0",
+            HttpHeaderInspectTool.CapabilityRef,
+            "unprivileged",
+            true,
+            new[] { target },
+            new[] { "http_metadata" },
+            true,
+            new[] { "raw", "redacted", "observation" },
+            true,
+            TimeSpan.FromSeconds(2),
+            4096);
+        var registry = new ToolRegistry();
+        registry.Register(toolManifest, adapter);
+        registry.Freeze();
+        var artifacts = new ArtifactStore();
+        var evidence = new EvidenceLedger(artifacts);
+        using var issuer = new PermitIssuer(new PolicyEngine(capabilities, CreateTrustStore(key)));
+        using var provenanceKey = RSA.Create(2048);
+        using var provenance = new ProvenanceAuthority(new ProductIdentity("cyber-sop-harness", "http-test", Canonicalization.Sha256Hex("http-test"), ProvenanceKeyCustody.Fingerprint(provenanceKey)), provenanceKey);
+        var broker = new ToolBroker(registry, evidence, issuer, provenance);
+        var permit = issuer.Issue(action, authorization, "http-worker");
+        Assert(issuer.TryConsume(permit, action, authorization, "http-worker"), "HTTP permit was not accepted before dispatch");
+
+        async Task ServeOnceAsync()
+        {
+            using var client = await listener.AcceptTcpClientAsync(CancellationToken.None);
+            await using var stream = client.GetStream();
+            var request = new MemoryStream();
+            var buffer = new byte[4096];
+            var headersComplete = false;
+            while (!headersComplete)
+            {
+                var read = await stream.ReadAsync(buffer, CancellationToken.None);
+                if (read == 0) break;
+                await request.WriteAsync(buffer.AsMemory(0, read), CancellationToken.None);
+                headersComplete = Encoding.UTF8.GetString(request.ToArray()).Contains("\r\n\r\n", StringComparison.Ordinal);
+            }
+            var body = "authorized-fixture-body";
+            var payload = Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nSet-Cookie: session=secret-canary\r\nContent-Length: {body.Length}\r\nConnection: close\r\n\r\n{body}");
+            await stream.WriteAsync(payload, CancellationToken.None);
+        }
+
+        try
+        {
+            var serverTask = ServeOnceAsync();
+            var outcome = await broker.ExecuteAsync(envelope, authorization, policy, permit, "http-worker", null, CancellationToken.None);
+            Assert(outcome.Dispatched && outcome.Evidence.Status == ToolResultStatus.Success, $"HTTP adapter did not succeed: {outcome.FailureReason}");
+            Assert(artifacts.TryGet(outcome.Evidence.RedactedArtifactRef!, out var redactedOutput), "redacted HTTP evidence artifact was missing");
+            var observation = Encoding.UTF8.GetString(redactedOutput);
+            using var document = JsonDocument.Parse(observation);
+            Assert(document.RootElement.GetProperty("status").GetInt32() == 200, "observed HTTP status was wrong");
+            Assert(document.RootElement.GetProperty("redirects_followed").GetInt32() == 0, "HTTP redirects were followed");
+            Assert(!observation.Contains("secret-canary", StringComparison.Ordinal), "sensitive header survived redaction");
+            Assert(observation.Contains("[REDACTED]", StringComparison.Ordinal), "redaction marker was missing");
+            Assert(provenance.Verify(outcome.Provenance, outcome.Evidence, authorization), "HTTP evidence provenance failed verification");
+            await serverTask.WaitAsync(TimeSpan.FromSeconds(1));
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
+    private static async Task TestEngagementManifestFile()
+    {
+        using var key = RSA.Create(2048);
+        var manifest = CreateManifest(key, DateTimeOffset.UtcNow);
+        var path = Path.Combine(Path.GetTempPath(), "engagement-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            await File.WriteAllTextAsync(path, JsonSerializer.Serialize(manifest, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+                Converters = { new JsonStringEnumConverter() }
+            }));
+            var loaded = await EngagementManifestFile.LoadAsync(path, CancellationToken.None);
+            var valid = EngagementManifestFile.Validate(loaded, key.ExportRSAPublicKeyPem());
+            Assert(valid.IsValid, "signed engagement manifest failed validation");
+            var tampered = loaded with { EngagementId = "tampered-engagement" };
+            var invalid = EngagementManifestFile.Validate(tampered, key.ExportRSAPublicKeyPem());
+            Assert(!invalid.IsValid && invalid.Errors.Any(error => error.Contains("signature", StringComparison.Ordinal)), "tampered engagement manifest was accepted");
+        }
+        finally
+        {
+            File.Delete(path);
         }
     }
 

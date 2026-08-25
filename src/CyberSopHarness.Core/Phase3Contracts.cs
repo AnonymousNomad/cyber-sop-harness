@@ -192,6 +192,10 @@ internal interface ILocalFixtureToolAdapter : IToolAdapter
 {
 }
 
+public interface IContainedNetworkToolAdapter : IToolAdapter
+{
+}
+
 public sealed class ToolRegistry
 {
     private readonly Dictionary<string, ToolRegistration> _registrations = new(StringComparer.Ordinal);
@@ -205,10 +209,22 @@ public sealed class ToolRegistry
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(adapter);
         if (string.IsNullOrWhiteSpace(manifest.ToolRef) || string.IsNullOrWhiteSpace(manifest.ToolVersion) || string.IsNullOrWhiteSpace(manifest.CapabilityRef)) throw new ArgumentException("tool identity is incomplete", nameof(manifest));
-        if (!manifest.RequiresContainedWorker || !manifest.ReadOnly || manifest.NetworkDestinations.Count != 0 || !manifest.CleanupRequired || manifest.MaxDuration <= TimeSpan.Zero || manifest.MaxOutputBytes <= 0) throw new InvalidOperationException("Phase 3 tools must be read-only, contained, bounded, network-disabled, and cleanup-required");
-        if (manifest.DataClasses.Any(dataClass => dataClass is not "synthetic" and not "none")) throw new InvalidOperationException("Phase 3 tools may only handle synthetic or no data");
+        if (!manifest.RequiresContainedWorker || !manifest.ReadOnly || !manifest.CleanupRequired || manifest.MaxDuration <= TimeSpan.Zero || manifest.MaxOutputBytes <= 0) throw new InvalidOperationException("tools must be read-only, contained, bounded, and cleanup-required");
+        var isFixtureAdapter = adapter is ILocalFixtureToolAdapter;
+        var isNetworkAdapter = adapter is IContainedNetworkToolAdapter;
+        if (isFixtureAdapter == isNetworkAdapter) throw new InvalidOperationException("adapter must be exactly one of fixture or contained-network");
+        if (isFixtureAdapter && (manifest.NetworkDestinations.Count != 0 || manifest.DataClasses.Any(dataClass => dataClass is not "synthetic" and not "none"))) throw new InvalidOperationException("fixture tools must be network-disabled and handle synthetic or no data");
+        if (isNetworkAdapter)
+        {
+            if (manifest.NetworkDestinations.Count == 0) throw new InvalidOperationException("network tools require explicit origin allowlist entries");
+            foreach (var destination in manifest.NetworkDestinations)
+            {
+                if (!Uri.TryCreate(destination, UriKind.Absolute, out var origin) || origin.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(origin.UserInfo) || !string.IsNullOrEmpty(origin.Query) || !string.IsNullOrEmpty(origin.Fragment))
+                    throw new InvalidOperationException("network destinations must be userinfo-free HTTP(S) origins");
+            }
+            if (manifest.DataClasses.Any(dataClass => dataClass is not "http_metadata")) throw new InvalidOperationException("network tools may only handle HTTP metadata");
+        }
         if (!manifest.EvidenceRequirements.Contains("raw", StringComparer.Ordinal) || !manifest.EvidenceRequirements.Contains("redacted", StringComparer.Ordinal) || !manifest.EvidenceRequirements.Contains("observation", StringComparer.Ordinal)) throw new InvalidOperationException("tool evidence requirements are incomplete");
-        if (adapter is not ILocalFixtureToolAdapter) throw new InvalidOperationException("Phase 3 accepts only registered local fixture adapters");
         if (!string.Equals(adapter.ToolRef, manifest.ToolRef, StringComparison.Ordinal) || !string.Equals(adapter.ToolVersion, manifest.ToolVersion, StringComparison.Ordinal)) throw new InvalidOperationException("adapter identity does not match tool manifest");
         var frozenManifest = manifest with
         {

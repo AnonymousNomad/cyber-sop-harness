@@ -48,7 +48,6 @@ public sealed class ToolBroker
         ArgumentNullException.ThrowIfNull(policy);
         ArgumentException.ThrowIfNullOrWhiteSpace(workerRef);
         var started = AuthoritativeClock.UtcNow;
-        if (manifest.EngagementMode != EngagementMode.Fixture) return Blocked(envelope, manifest, policy, workerRef, "Phase 3 broker is fixture-only; authorized dispatch is blocked", started);
         var actionValidation = ActionRequestValidator.Validate(envelope.Request);
         if (!actionValidation.IsValid) throw new InvalidOperationException("action envelope is malformed: " + string.Join("; ", actionValidation.Errors));
         var envelopeValidation = ActionEnvelopeValidator.Validate(envelope);
@@ -58,6 +57,17 @@ public sealed class ToolBroker
         if (!_registry.IsFrozen) return Blocked(envelope, manifest, policy, workerRef, "tool registry must be frozen before dispatch", started);
         if (policy.ActionHash != envelope.ActionHash || policy.ManifestHash != Canonicalization.AuthorizationHash(manifest) || policy.AuthorizationRef != envelope.Request.AuthorizationRef || policy.CapabilityRef != envelope.Request.CapabilityRef) return Blocked(envelope, manifest, policy, workerRef, "policy is not bound to the current action envelope", started);
         if (!_registry.TryGet(envelope.Request.CapabilityRef, out var registration) || registration is null) return Blocked(envelope, manifest, policy, workerRef, "tool capability is unknown", started);
+        if (manifest.EngagementMode == EngagementMode.Authorized)
+        {
+            if (registration.Adapter is not IContainedNetworkToolAdapter)
+                return Blocked(envelope, manifest, policy, workerRef, "authorized dispatch requires a contained network tool", started);
+            if (!NetworkToolGuard.IsTargetAllowed(envelope.Request.TargetRef, registration.Manifest.NetworkDestinations))
+                return Blocked(envelope, manifest, policy, workerRef, "target origin is outside the tool allowlist", started);
+        }
+        else if (registration.Adapter is not ILocalFixtureToolAdapter)
+        {
+            return Blocked(envelope, manifest, policy, workerRef, "fixture mode permits only fixture tools", started);
+        }
         if (!_permitIssuer.TryClaimConsumed(permit, envelope.Request, manifest, workerRef, policy, approval)) return Blocked(envelope, manifest, policy, workerRef, "permit is expired, invalid, replayed, or not bound to the current tool dispatch", started);
         var context = new ToolExecutionContext(envelope, manifest, policy, permit, registration.Manifest, workerRef);
         var providerMetadata = new ProviderExecutionMetadata(envelope.Provider, envelope.ProviderOutputSha256, envelope.ProviderLatency, envelope.ProviderTokenUsage, envelope.ProviderFailureClass);

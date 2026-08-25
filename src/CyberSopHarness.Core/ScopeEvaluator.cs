@@ -67,8 +67,14 @@ public sealed class ScopeEvaluator
         if (MetadataHosts.Contains(host) || host is "169.254.169.254" or "fd00:ec2::254") return true;
         if (!IPAddress.TryParse(host, out var ip)) return _manifest.EngagementMode == EngagementMode.Authorized && host == "localhost";
         if (IsMetadataIp(ip)) return true;
-        if (_manifest.EngagementMode == EngagementMode.Fixture) return IsPrivateOrReserved(ip) && !IPAddress.IsLoopback(ip);
-        return IsPrivateOrReserved(ip);
+        if (!IsPrivateOrReserved(ip)) return false;
+        if (_manifest.EngagementMode == EngagementMode.Authorized
+            && IPAddress.IsLoopback(ip)
+            && _manifest.Scope.Allow.Any(entry => string.Equals(CanonicalHost(entry), "127.0.0.1", StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+        return _manifest.EngagementMode != EngagementMode.Fixture || !IPAddress.IsLoopback(ip);
     }
 
     private static bool IsMetadataIp(IPAddress ip)
