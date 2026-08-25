@@ -1244,3 +1244,21 @@ Evidence: `src/CyberSopHarness.Core/SecretProtector.cs`, `src/CyberSopHarness.Ap
 Risk: The HTTP adapter is read-only metadata inspection, but authorized-mode dispatch can contact real targets; production use still requires operator-supplied legal authorization, exact DNS resolution, containment review, and acceptance that Linux/macOS passphrase custody is portable rather than hardware-backed.
 
 Next: Add desk integration coverage so permit binding cannot regress; expand typed adapters only through the same policy/permit/evidence gate; add OS keychain or secure enclave custody where practical; then exercise one explicitly authorized external target under operational supervision.
+
+### P3C-RUNTIME-0012: Broker now has an unconsumed-permit regression gate
+
+Date: 2026-08-25
+
+Event type: Verification
+
+Actor: Codex
+
+Intent: Preserve the live desk-dispatch fix by proving that an unconsumed one-use permit cannot claim broker execution or invoke a tool adapter.
+
+Observed result: Extended the Phase 3 runtime fixture with an optional consumed-permit mode and added assertions to the synthetic fixture battery. An unconsumed permit produces `ToolResultStatus.Blocked`, returns the precise permit-binding failure, dispatches no adapter invocation, and cannot create successful evidence. The existing positive path still executes, records observation evidence, verifies provenance, and succeeds cleanup.
+
+Evidence: `tests/Phase3.Tests/Program.cs`, focused Phase 3 suite pass with 27 tests, build with zero warnings and zero errors.
+
+Risk: This guards broker behavior, not every future CLI call site. New command surfaces must continue to call `TryConsume` before invoking `ToolBroker.ExecuteAsync`.
+
+Next: Promote desk HTTP submission from live smoke verification into an automated application-level integration harness when the test surface supports deterministic PTY/process execution.

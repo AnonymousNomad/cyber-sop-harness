@@ -929,6 +929,11 @@ internal static class Program
         Assert(fixture.Provenance.Verify(outcome.Provenance, outcome.Evidence, fixture.Manifest), "synthetic fixture evidence provenance failed verification");
         Assert(outcome.Evidence.ObservationRefs.Contains("fixture.observation", StringComparer.Ordinal), "synthetic fixture observation was not recorded");
         Assert(fixture.Evidence.TryReadArtifact(outcome.Evidence.RawArtifactRef, out var raw) && Encoding.UTF8.GetString(raw) == "fixture response", "synthetic fixture raw artifact diverged");
+        using var unbound = new RuntimeFixture(new SyntheticFixtureToolAdapter("fixture-tool", "1.0", "must-not-run", ToolResultStatus.Success, "fixture.observation"), consumePermit: false);
+        var rejected = unbound.Broker.ExecuteAsync(unbound.Envelope, unbound.Manifest, unbound.Policy, unbound.Permit, unbound.WorkerRef, null, CancellationToken.None).GetAwaiter().GetResult();
+        Assert(!rejected.Dispatched && rejected.Evidence.Status == ToolResultStatus.Blocked, "broker dispatched without consuming its one-use permit");
+        Assert(rejected.FailureReason == "permit is expired, invalid, replayed, or not bound to the current tool dispatch", "unconsumed-permit rejection was imprecise");
+        Assert(unbound.AdapterInvocationCount == 0, "tool adapter ran despite an unconsumed permit");
         return Task.CompletedTask;
     }
 
@@ -1296,7 +1301,7 @@ internal static class Program
 
     private sealed class RuntimeFixture : IDisposable
     {
-        public RuntimeFixture(IToolAdapter? adapter = null, DurableEvidenceJournal? journal = null)
+        public RuntimeFixture(IToolAdapter? adapter = null, DurableEvidenceJournal? journal = null, bool consumePermit = true)
         {
             Key = RSA.Create(2048);
             var now = DateTimeOffset.UtcNow;
@@ -1305,7 +1310,7 @@ internal static class Program
             Policy = new PolicyEngine(CreateCapabilities(), CreateTrustStore(Key)).Evaluate(Action, Manifest, null);
             Issuer = new PermitIssuer(new PolicyEngine(CreateCapabilities(), CreateTrustStore(Key)));
             Permit = Issuer.Issue(Action, Manifest, "phase3-worker");
-            Assert(Issuer.TryConsume(Permit, Action, Manifest, "phase3-worker"), "fixture permit was not consumed");
+            if (consumePermit) Assert(Issuer.TryConsume(Permit, Action, Manifest, WorkerRef), "fixture permit was not consumed");
             Provider = new ProviderDescriptor("fixture-provider", "fixture-model", "1.0", Canonicalization.Sha256Hex("fixture-config"), "local-only", "none", "typed");
             var proposal = new ProviderProposal(Provider, Action, Canonicalization.Sha256Hex("fixture-proposal"), TimeSpan.FromMilliseconds(1), 8, ProviderFailureClass.None);
             Envelope = ActionEnvelopeFactory.Create(proposal);
