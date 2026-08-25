@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 
@@ -22,7 +23,88 @@ public sealed record ModelRuntimeManifest(
     long MaxModelBytes,
     long MaxWorkingSetBytes,
     long MaxVramBytes,
-    string ExpectedServerModel);
+    string ExpectedServerModel,
+    int ThreadCount = 2);
+
+public sealed record ModelResourceCheck(bool IsValid, long? AvailableMemoryBytes, long? AvailableDiskBytes, IReadOnlyList<string> Errors)
+{
+    public static ModelResourceCheck Pass(long availableMemoryBytes, long availableDiskBytes) =>
+        new(true, availableMemoryBytes, availableDiskBytes, Array.Empty<string>());
+}
+
+public static class DeviceResourceGate
+{
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private sealed class MemoryStatusEx
+    {
+        public uint Length = (uint)System.Runtime.InteropServices.Marshal.SizeOf<MemoryStatusEx>();
+        public uint MemoryLoad;
+        public ulong TotalPhys;
+        public ulong AvailPhys;
+        public ulong TotalPageFile;
+        public ulong AvailPageFile;
+        public ulong TotalVirtual;
+        public ulong AvailVirtual;
+        public ulong AvailExtendedVirtual;
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool GlobalMemoryStatusEx([In, Out] MemoryStatusEx buffer);
+
+    public static ModelResourceCheck Check(ModelRuntimeManifest manifest, string modelPath)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        var errors = new List<string>();
+        var availableMemory = GetAvailableMemoryBytes();
+        var modelFile = new FileInfo(modelPath);
+        var requiredDisk = Math.Max(manifest.MaxModelBytes, modelFile.Exists ? modelFile.Length : 0) + 256L * 1024L * 1024L;
+        long? availableDisk = null;
+        try
+        {
+            var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(modelPath)) ?? throw new InvalidOperationException("model drive could not be determined"));
+            availableDisk = drive.AvailableFreeSpace;
+            if (availableDisk < requiredDisk) errors.Add($"disk budget failed: need {requiredDisk}, available {availableDisk}");
+        }
+        catch (Exception exception) when (exception is ArgumentException or IOException or NotSupportedException)
+        {
+            errors.Add("disk availability could not be determined");
+        }
+
+        if (availableMemory is null)
+        {
+            errors.Add("available memory could not be determined; resource gate is fail-closed");
+        }
+        else if (availableMemory < manifest.MaxWorkingSetBytes)
+        {
+            errors.Add($"memory budget failed: need {manifest.MaxWorkingSetBytes}, available {availableMemory}");
+        }
+
+        return errors.Count == 0
+            ? ModelResourceCheck.Pass(availableMemory ?? 0, availableDisk ?? 0)
+            : new(false, availableMemory, availableDisk, errors);
+    }
+
+    private static long? GetAvailableMemoryBytes()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var status = new MemoryStatusEx();
+            return GlobalMemoryStatusEx(status) ? Convert.ToInt64(status.AvailPhys) : null;
+        }
+        foreach (var line in File.ReadLines("/proc/meminfo"))
+        {
+            const string prefix = "MemAvailable:";
+            if (!line.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            var fields = line[prefix.Length..].Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (fields.Length > 0 && long.TryParse(fields[0], System.Globalization.CultureInfo.InvariantCulture, out var kilobytes))
+            {
+                return kilobytes * 1024L;
+            }
+        }
+        return null;
+    }
+}
 
 public sealed record ModelRuntimeValidation(bool IsValid, IReadOnlyList<string> Errors);
 
@@ -57,6 +139,8 @@ public sealed class LocalModelRuntime : IAsyncDisposable
         if (port is < 1024 or > 65535) throw new ArgumentOutOfRangeException(nameof(port));
         var validation = await ModelRuntimeValidator.ValidateAsync(manifest, cancellationToken);
         if (!validation.IsValid) throw new InvalidOperationException("model runtime manifest is invalid: " + string.Join("; ", validation.Errors));
+        var resources = DeviceResourceGate.Check(manifest, manifest.ModelPath);
+        if (!resources.IsValid) throw new InvalidOperationException("model runtime resource gate failed: " + string.Join("; ", resources.Errors));
         await StopAsync();
         var startInfo = new ProcessStartInfo
         {
@@ -86,10 +170,12 @@ public sealed class LocalModelRuntime : IAsyncDisposable
         startInfo.ArgumentList.Add("0");
         startInfo.ArgumentList.Add("--no-repack");
         startInfo.ArgumentList.Add("--threads");
-        startInfo.ArgumentList.Add("6");
+        startInfo.ArgumentList.Add(manifest.ThreadCount.ToString(System.Globalization.CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add("--n-predict");
         startInfo.ArgumentList.Add("8");
         var process = Process.Start(startInfo) ?? throw new InvalidOperationException("model runtime process did not start");
+        process.OutputDataReceived += (_, _) => { };
+        process.ErrorDataReceived += (_, _) => { };
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
         lock (_gate)

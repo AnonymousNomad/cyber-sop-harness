@@ -366,7 +366,7 @@ public sealed class CommandDeskVerbRegistry : ICommandDeskVerbRegistry
             new CommandDeskVerb("evidence", "inspect evidence integrity and export", new[] { "list", "verify", "export" }),
             new CommandDeskVerb("exit", "leave the command desk", Array.Empty<string>()),
             new CommandDeskVerb("help", "show desk help", Array.Empty<string>()),
-            new CommandDeskVerb("model", "inspect pinned model/runtime", new[] { "pin", "serve", "status" }),
+            new CommandDeskVerb("model", "inspect pinned model/runtime", new[] { "pin", "serve", "stop", "status" }),
             new CommandDeskVerb("proposal", "parse and submit a proposal", new[] { "validate", "submit" }),
             new CommandDeskVerb("report", "build an evidence-backed report", new[] { "build" }),
             new CommandDeskVerb("status", "show provider and endpoint selection", Array.Empty<string>()),

@@ -22,6 +22,7 @@ internal static class Program
         await Run("finding lifecycle and report gate", TestFindingLifecycle);
         await Run("model provider selection", TestModelProviderSelection);
         await Run("model runtime manifest validation", TestModelRuntimeManifest);
+        await Run("desk model pin and resource gate", TestDeskModelPin);
         await Run("strict model proposal parsing", TestModelProposalParsing);
         await Run("offline provider failure is controlled", TestOfflineProviderFailure);
         await Run("provider selection persistence and manifest loading", TestProviderSelectionPersistence);
@@ -317,6 +318,69 @@ internal static class Program
             Assert((await ModelRuntimeValidator.ValidateAsync(manifest, CancellationToken.None)).IsValid, "valid runtime manifest was rejected");
             await File.AppendAllTextAsync(modelPath, "tamper");
             Assert(!(await ModelRuntimeValidator.ValidateAsync(manifest, CancellationToken.None)).IsValid, "tampered model passed manifest validation");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    private static async Task TestDeskModelPin()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "csh-model-pin-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "models", "fixture-model"));
+        Directory.CreateDirectory(Path.Combine(root, "state"));
+        try
+        {
+            var directory = Path.Combine(root, "models", "fixture-model");
+            var modelPath = Path.Combine(directory, "model.gguf");
+            var runtimePath = Path.Combine(directory, "llama-server");
+            var licensePath = Path.Combine(directory, "LICENSE.txt");
+            var templatePath = Path.Combine(directory, "template.jinja");
+            await File.WriteAllBytesAsync(modelPath, new byte[] { 1, 2, 3 });
+            await File.WriteAllBytesAsync(runtimePath, new byte[] { 4, 5 });
+            await File.WriteAllTextAsync(licensePath, "license");
+            await File.WriteAllTextAsync(templatePath, "template");
+            var payload = new
+            {
+                model_ref = "fixture-model",
+                model_revision = "rev-1",
+                model_file = "model.gguf",
+                model_bytes = 3L,
+                working_set_bytes = 1L,
+                model_sha256 = Canonicalization.Sha256Hex(await File.ReadAllBytesAsync(modelPath)),
+                architecture = "fixture",
+                context_size = 512,
+                runtime_ref = "runtime-fixture",
+                runtime_commit = "commit-1",
+                runtime_binary = "llama-server",
+                runtime_sha256 = Canonicalization.Sha256Hex(await File.ReadAllBytesAsync(runtimePath)),
+                runtime_version = "test-1",
+                license_notice = "fixture",
+                runtime_license = "LICENSE.txt",
+                chat_template = "template.jinja",
+                chat_template_sha256 = Canonicalization.Sha256Hex(Encoding.UTF8.GetBytes("template")),
+                expected_server_model = "fixture-model",
+                launch_mode = "managed-loopback-offline",
+                license_review = "required"
+            };
+            var manifestPath = Path.Combine(directory, "MODEL-RUNTIME-MANIFEST.json");
+            await File.WriteAllTextAsync(manifestPath, JsonSerializer.Serialize(payload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }));
+            var manifests = await StagedModelCatalog.LoadAsync(Path.Combine(root, "models"), CancellationToken.None);
+            Assert(manifests.TryGetValue("fixture-model", out var manifest) && manifest is not null && manifest.MaxWorkingSetBytes == 1, "explicit working-set budget was lost");
+            var selectionStore = new ModelProviderSelectionStore(Path.Combine(root, "state", "selection.json"));
+            var control = new CommandDeskModelControl(manifests, selectionStore);
+            var unacknowledged = await control.PinAsync("fixture-model", false, CancellationToken.None);
+            Assert(unacknowledged.ExitCode == 2, "license acknowledgement was bypassed");
+            var pinned = await control.PinAsync("fixture-model", true, CancellationToken.None);
+            Assert(pinned.ExitCode == 0, $"valid model pin failed: {pinned.Message}");
+            var selection = await selectionStore.LoadAsync(CancellationToken.None);
+            Assert(selection?.Kind == ModelProviderKind.VerifiedLocal && selection.ProviderRef == "fixture-model" && !selection.ExternalEgressAllowed, "verified local selection was incorrect");
+            await File.AppendAllTextAsync(modelPath, "tamper");
+            var tampered = await control.PinAsync("fixture-model", true, CancellationToken.None);
+            Assert(tampered.ExitCode == 1, "tampered model pin was accepted");
+            var exhausted = DeviceResourceGate.Check(manifest! with { MaxWorkingSetBytes = long.MaxValue }, modelPath);
+            Assert(!exhausted.IsValid && exhausted.Errors.Any(error => error.Contains("memory budget failed", StringComparison.Ordinal)), "memory exhaustion passed the resource gate");
         }
         finally
         {

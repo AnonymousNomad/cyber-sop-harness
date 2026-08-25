@@ -20,6 +20,7 @@ public sealed record StagedModelManifest(
     string ChatTemplate,
     string ChatTemplateSha256,
     string ExpectedServerModel,
+    long WorkingSetBytes,
     string LaunchMode,
     string LicenseReview);
 
@@ -60,7 +61,7 @@ public static class StagedModelCatalog
                 staged.ChatTemplateSha256,
                 staged.ContextSize,
                 staged.ModelBytes,
-                staged.ModelBytes * 3,
+                staged.WorkingSetBytes > 0 ? staged.WorkingSetBytes : staged.ModelBytes * 3,
                 staged.ModelBytes,
                 staged.ExpectedServerModel);
             result[Path.GetFileName(modelDirectory)] = manifest;

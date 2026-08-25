@@ -6,7 +6,7 @@ A portable governance and execution framework that puts a policy, evidence, and 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4.svg)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux--dev-blue.svg)](#status)
-[![Tests](https://img.shields.io/badge/tests-40%20passing-brightgreen.svg)](https://github.com/AnonymousNomad/cyber-sop-harness/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-41%20passing-brightgreen.svg)](https://github.com/AnonymousNomad/cyber-sop-harness/actions/workflows/ci.yml)
 
 ## Why
 
@@ -35,8 +35,8 @@ This project is for authorized work only. It does not authorize targets, bypass 
 |---|---|
 | Governed offline pipeline | Working Windows CLI path through policy, permit, synthetic-tool dispatch, verification, report, journal, and replay tests |
 | Command desk | Fixed-verb terminal surface with doctor, status, help, model inspection, JSON mode, bounded history, sanitization, and emergency stop; Phase B views are in progress |
-| Cross-platform builds | Linux/arm64 build and 40-test validation pass locally; full governed execution still requires Windows DPAPI custody today |
-| Local model runtime | Manifest design, loopback boundary, and measured LFM2.5 edge benchmark exist; pinned model serving is not yet wired into the desk |
+| Cross-platform builds | Linux/arm64 build and 41-test validation pass locally; full governed execution still requires Windows DPAPI custody today |
+| Local model runtime | LFM2.5 can be hash-pinned and served from the desk at 2K context in development preview; loopback-only runtime is offline with tools disabled |
 | Live security tools | Not implemented; the current adapter is explicitly synthetic |
 | Production gate | No release has passed live-target containment, operator acceptance, threat-model review, and independent evidence verification |
 
@@ -144,6 +144,18 @@ dotnet run --project src/CyberSopHarness.App -- desk
 
 The desk supports `action`, `doctor`, `emergency`, `engagement`, `evidence`, `exit`, `help`, `model`, `proposal`, `report`, and `status`. Use `--json` for machine-readable output, `--no-color` to disable styling explicitly, `--no-history` for ephemeral sessions, and `--command 'status\nhelp'` for scripted checks. A critical result engages emergency stop and ends the REPL.
 
+For a staged model, review its license first, then use:
+
+```bash
+dotnet run --project src/CyberSopHarness.App -- desk --models-dir /absolute/path/to/staged-models
+# model pin NAME --ack-license yes
+# model serve NAME --port 18080
+# model status
+# model stop
+```
+
+Pinning verifies every manifest artifact by SHA-256 and enforces explicit disk/memory budgets before recording a verified-local provider. Serving binds only to loopback, starts offline with tools disabled, checks health/model identity, performs warmup, and stops the process tree on exit or emergency stop. The model/runtime artifacts remain user-staged and are not distributed by this repository.
+
 ## CLI reference
 
 | Command | Description |
@@ -168,15 +180,15 @@ Every governed run produces: a `DurableEvidenceJournal` with recovery and tamper
 
 ## Tests
 
-40 deterministic offline tests across three self-running suites. The count is deliberately conservative: these are fast, reproducible contract and behavior tests rather than broad model-output snapshots. Real-model smoke coverage remains opt-in so CI does not depend on weights or network access:
+41 deterministic offline tests across three self-running suites. The count is deliberately conservative: these are fast, reproducible contract and behavior tests rather than broad model-output snapshots. Real-model smoke coverage remains opt-in so CI does not depend on weights or network access:
 
 ```powershell
 dotnet run --project tests/Phase2.Tests --configuration Release  # 10 tests: policy, permits, workers, job objects
-dotnet run --project tests/Phase3.Tests --configuration Release  # 23 tests: providers, evidence, provenance, bootstrap
+dotnet run --project tests/Phase3.Tests --configuration Release  # 24 tests: providers, evidence, provenance, model pinning
 dotnet run --project tests/CommandDesk.Tests --configuration Release  # 7 tests: input, rendering, history, stop behavior
 ```
 
-A real-model runtime smoke test is opt-in via `PHASE3B_REAL_MODEL=1` and never runs in CI. CI builds on Windows and Linux with warnings treated as errors, runs all 40 deterministic tests, and rejects changes that cannot meet those gates.
+A real-model runtime smoke test is opt-in via `PHASE3B_REAL_MODEL=1` and never runs in CI. CI builds on Windows and Linux with warnings treated as errors, runs all 41 deterministic tests, and rejects changes that cannot meet those gates.
 
 ## Documentation
 

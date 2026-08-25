@@ -112,31 +112,90 @@ internal static class Program
         var renderOptions = CommandDeskRenderOptions.FromEnvironment(args, !Console.IsOutputRedirected);
         var renderer = new CommandDeskRenderer(renderOptions);
         var registry = CommandDeskVerbRegistry.Default;
+        var modelsDirectory = Path.GetFullPath(ArgumentValue(args, "--models-dir") ?? Path.Combine(dataDir, "..", "models"));
+        var manifests = await StagedModelCatalog.LoadAsync(modelsDirectory, CancellationToken.None);
+        var modelControl = new CommandDeskModelControl(manifests, selectionStore);
+        LocalModelRuntime? deskRuntime = null;
         var historyDirectory = args.Contains("--no-history", StringComparer.OrdinalIgnoreCase) ? null : Path.Combine(dataDir, "command-history");
         var replOptions = new CommandDeskReplOptions();
 
-        Task<CommandDeskExecution> Handler(CommandDeskInvocation invocation, CommandDeskState state, CancellationToken cancellationToken)
+        async Task<CommandDeskResult> ModelCommandAsync(CommandDeskInvocation invocation, CancellationToken cancellationToken)
+        {
+            var action = invocation.Arguments.ElementAtOrDefault(0)?.ToLowerInvariant() ?? "status";
+            if (action == "status") return modelControl.Status(selection, deskRuntime);
+            if (action == "stop")
+            {
+                if (deskRuntime is not null) await deskRuntime.StopAsync();
+                return CommandDeskResult.Success("local model runtime stopped");
+            }
+            if (action is not ("pin" or "serve"))
+            {
+                return CommandDeskResult.UsageError("unknown model action; expected pin, serve, stop, or status");
+            }
+
+            var modelName = invocation.Arguments.ElementAtOrDefault(1) ?? ArgumentValue(args, "--model");
+            var resolution = await modelControl.ResolveAsync(modelName ?? string.Empty, cancellationToken);
+            if (!resolution.IsValid || resolution.Manifest is null) return resolution.Result!;
+            var manifest = resolution.Manifest;
+            if (action == "pin")
+            {
+                var acknowledged = ArgumentValue(invocation.Arguments.ToArray(), "--ack-license")?.Equals("yes", StringComparison.OrdinalIgnoreCase) == true;
+                var pinned = await modelControl.PinAsync(modelName!, acknowledged, cancellationToken);
+                selection = await selectionStore.LoadAsync(cancellationToken);
+                providerModel = selection?.ProviderRef ?? "none";
+                return pinned;
+            }
+
+            deskRuntime ??= new LocalModelRuntime(readinessTimeout: TimeSpan.FromSeconds(180));
+            await deskRuntime.StopAsync();
+            var validation = await ModelRuntimeValidator.ValidateAsync(manifest, cancellationToken);
+            if (!validation.IsValid) return CommandDeskResult.Failure("pinned artifacts failed verification", validation.Errors.ToArray());
+            var resources = DeviceResourceGate.Check(manifest, manifest.ModelPath);
+            if (!resources.IsValid) return CommandDeskResult.Failure("device failed the model resource gate", resources.Errors.ToArray());
+            var portValue = ArgumentValue(invocation.Arguments.ToArray(), "--port");
+            var port = portValue is not null && int.TryParse(portValue, out var parsedPort) ? parsedPort : 18080;
+            var started = await deskRuntime.StartAsync(manifest, port, cancellationToken);
+            if (!started.Ready || started.Identity is null) return CommandDeskResult.Failure("model runtime did not become ready", started.Error ?? "unknown");
+            return CommandDeskResult.Success(
+                $"model runtime ready: {started.Identity.ModelId}",
+                $"endpoint={started.Endpoint}",
+                $"pid={started.ProcessId}",
+                $"revision={started.Identity.ModelRevision}",
+                $"runtime={started.Identity.RuntimeVersion}",
+                "tools=disabled bind=loopback offline=true");
+        }
+
+        async Task<CommandDeskExecution> Handler(CommandDeskInvocation invocation, CommandDeskState state, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            CommandDeskResult result = invocation.Verb.ToLowerInvariant() switch
+            CommandDeskResult result;
+            if (invocation.Verb.Equals("model", StringComparison.OrdinalIgnoreCase))
             {
-                "help" => CommandDeskResult.Info("Registered verbs", registry.Verbs.Select(verb => $"{verb.Name}: {verb.Summary}").ToArray()),
-                "doctor" => DoctorResult(state, dataDir, selection?.ProviderRef, endpoint?.ToString()),
-                "emergency" when invocation.Arguments.Count == 0 || invocation.Arguments[0].Equals("stop", StringComparison.OrdinalIgnoreCase) =>
-                    new(1, CommandDeskSeverity.Critical, "emergency stop engaged; governed workers must now be cancelled by the supervisor", Array.Empty<string>()),
-                "emergency" when invocation.Arguments.Count == 1 && invocation.Arguments[0].Equals("status", StringComparison.OrdinalIgnoreCase) =>
-                    state.EmergencyStopped
-                        ? CommandDeskResult.Warning("emergency stop is engaged")
-                        : CommandDeskResult.Info("emergency stop is clear"),
-                "model" => CommandDeskResult.Info(
-                    $"provider={providerModel}",
-                    "pin verification requires a ModelRuntimeManifest; run the dedicated model workflow"),
-                "status" => CommandDeskResult.Info(
-                    $"provider={providerModel} egress={(selection?.ExternalEgressAllowed == true ? "allowed" : "denied")} endpoint={endpoint?.ToString() ?? "none"}"),
-                _ => new(3, CommandDeskSeverity.Warning, $"{invocation.Verb} is registered but its governed execution path is not wired yet", Array.Empty<string>())
-            };
+                result = await ModelCommandAsync(invocation, cancellationToken);
+            }
+            else if (invocation.Verb.Equals("emergency", StringComparison.OrdinalIgnoreCase)
+                && (invocation.Arguments.Count == 0 || invocation.Arguments[0].Equals("stop", StringComparison.OrdinalIgnoreCase)))
+            {
+                if (deskRuntime is not null) await deskRuntime.StopAsync();
+                result = new(1, CommandDeskSeverity.Critical, "emergency stop engaged; local inference stopped and governed workers must now be cancelled by the supervisor", Array.Empty<string>());
+            }
+            else
+            {
+                result = invocation.Verb.ToLowerInvariant() switch
+                {
+                    "help" => CommandDeskResult.Info("Registered verbs", registry.Verbs.Select(verb => $"{verb.Name}: {verb.Summary}").ToArray()),
+                    "doctor" => DoctorResult(state, dataDir, selection?.ProviderRef, endpoint?.ToString()),
+                    "emergency" when invocation.Arguments.Count == 1 && invocation.Arguments[0].Equals("status", StringComparison.OrdinalIgnoreCase) =>
+                        state.EmergencyStopped
+                            ? CommandDeskResult.Warning("emergency stop is engaged")
+                            : CommandDeskResult.Info("emergency stop is clear"),
+                    "status" => CommandDeskResult.Info(
+                        $"provider={providerModel} egress={(selection?.ExternalEgressAllowed == true ? "allowed" : "denied")} endpoint={endpoint?.ToString() ?? "none"}"),
+                    _ => new(3, CommandDeskSeverity.Warning, $"{invocation.Verb} is registered but its governed execution path is not wired yet", Array.Empty<string>())
+                };
+            }
             var nextState = result.Severity == CommandDeskSeverity.Critical ? state with { EmergencyStopped = true } : null;
-            return Task.FromResult(new CommandDeskExecution(result, nextState));
+            return new CommandDeskExecution(result, nextState);
         }
 
         var repl = new CommandDeskRepl(renderer, registry, new DelegateCommandDeskHandler(Handler), replOptions, historyDirectory);
@@ -144,7 +203,14 @@ internal static class Program
         ICommandDeskInputReader reader = command is null
             ? new ConsoleCommandDeskInputReader()
             : new TextReaderCommandDeskInputReader(new StringReader(command.Replace("\\n", "\n", StringComparison.Ordinal)));
-        return await repl.RunAsync(Console.Out, Console.Error, reader, initialState, CancellationToken.None);
+        try
+        {
+            return await repl.RunAsync(Console.Out, Console.Error, reader, initialState, CancellationToken.None);
+        }
+        finally
+        {
+            if (deskRuntime is not null) await deskRuntime.StopAsync();
+        }
     }
 
     private static CommandDeskResult DoctorResult(
