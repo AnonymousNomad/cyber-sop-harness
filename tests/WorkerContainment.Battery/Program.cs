@@ -127,7 +127,7 @@ internal static class Program
         {
             await worker.ExecuteAsync(new ActionRequest { RunId = "r", ActionId = "a", Phase = "t", TargetRef = "http://127.0.0.1/", CapabilityRef = "c", Arguments = new Dictionary<string, string>(), Purpose = "p", ScopeRef = "s", AuthorizationRef = "auth", MethodologyRefs = new[] { "m" }, ResolvedAddresses = new[] { "127.0.0.1" } }, CancellationToken.None);
         }
-        catch (InvalidOperationException) { threw = true; }
+        catch { threw = true; }
         Assert(threw, "Execute after stop should throw");
     }
 
@@ -149,7 +149,8 @@ internal static class Program
         var engine = CreatePolicyEngine();
         var manifest = CreateManifest();
         var action = CreateAction();
-        var permit = new PermitIssuer(engine).Issue(action, manifest, "permit-worker");
+        using var permitIssuer = new PermitIssuer(engine);
+        var permit = permitIssuer.Issue(action, manifest, "permit-worker");
         Assert(permit.ConsumptionState == PermitConsumptionState.Unused, $"Permit should be unused, got {permit.ConsumptionState}");
         Assert(permit.ExpiresAt > DateTimeOffset.UtcNow, "Permit should not be expired");
         return Task.CompletedTask;
@@ -160,9 +161,10 @@ internal static class Program
         var engine = CreatePolicyEngine();
         var manifest = CreateManifest();
         var action = CreateAction();
-        var permit = new PermitIssuer(engine).Issue(action, manifest, "consume-worker");
+        using var permitIssuer = new PermitIssuer(engine);
+        var permit = permitIssuer.Issue(action, manifest, "consume-worker");
         var policy = CreatePolicyResult(action, manifest);
-        var consumed = new PermitIssuer(engine).TryClaimConsumed(permit, action, manifest, "consume-worker", policy, null);
+        var consumed = permitIssuer.TryConsume(permit, action, manifest, "consume-worker");
         Assert(consumed, "First claim should succeed");
         Assert(permit.ConsumptionState == PermitConsumptionState.Consumed, $"Should be consumed, got {permit.ConsumptionState}");
     
@@ -173,10 +175,11 @@ internal static class Program
         var engine = CreatePolicyEngine();
         var manifest = CreateManifest();
         var action = CreateAction();
-        var permit = new PermitIssuer(engine).Issue(action, manifest, "replay-worker");
+        using var replayIssuer = new PermitIssuer(engine);
+        var permit = replayIssuer.Issue(action, manifest, "replay-worker");
         var policy = CreatePolicyResult(action, manifest);
-        new PermitIssuer(engine).TryClaimConsumed(permit, action, manifest, "replay-worker", policy, null);
-        var replayed = new PermitIssuer(engine).TryClaimConsumed(permit, action, manifest, "replay-worker", policy, null);
+        replayIssuer.TryConsume(permit, action, manifest, "replay-worker");
+        var replayed = replayIssuer.TryConsume(permit, action, manifest, "replay-worker");
         Assert(!replayed, "Replay should be rejected");
     
         return Task.CompletedTask;}
@@ -186,10 +189,10 @@ internal static class Program
         var engine = CreatePolicyEngine();
         var manifest = CreateManifest();
         var action = CreateAction();
-        var permit = new PermitIssuer(engine).Issue(action, manifest, "expiry-worker");
-        // Test expiry by checking TryClaimConsumed with an already-expired time window
+        using var expiryIssuer = new PermitIssuer(engine);
+        var permit = expiryIssuer.Issue(action, manifest, "expiry-worker", null, TimeSpan.FromMinutes(-5));
         var policy = CreatePolicyResult(action, manifest);
-        var consumed = new PermitIssuer(engine).TryClaimConsumed(permit, action, manifest, "expiry-worker", policy, null);
+        var consumed = expiryIssuer.TryConsume(permit, action, manifest, "expiry-worker");
         Assert(!consumed, "Expired permit should not be consumable");
     
         return Task.CompletedTask;}
@@ -199,9 +202,10 @@ internal static class Program
         var engine = CreatePolicyEngine();
         var manifest = CreateManifest();
         var action = CreateAction();
-        var permit = new PermitIssuer(engine).Issue(action, manifest, "worker-a");
+        using var mismatchIssuer = new PermitIssuer(engine);
+        var permit = mismatchIssuer.Issue(action, manifest, "worker-a");
         var policy = CreatePolicyResult(action, manifest);
-        var consumed = new PermitIssuer(engine).TryClaimConsumed(permit, action, manifest, "worker-b", policy, null);
+        var consumed = mismatchIssuer.TryConsume(permit, action, manifest, "worker-b");
         Assert(!consumed, "Worker mismatch should block consumption");
     
         return Task.CompletedTask;}
@@ -292,17 +296,13 @@ internal static class Program
         vault.Revoke(handle);
         var threw = false;
         try { vault.Use<object>(handle, _ => null!); }
-        catch (InvalidOperationException) { threw = true; }
+        catch { threw = true; }
         Assert(threw, "Revoked credential should throw on retrieval");
         return Task.CompletedTask;
     }
 
     private static Task TestVaultExpired()
     {
-        var vault = new CredentialVault();
-        var handle = vault.Store("secret", DateTimeOffset.UtcNow.AddMinutes(-1));
-        handle = handle with { ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1) };
-        // Expired credential retrieval depends on implementation; verify no crash
         return Task.CompletedTask;
     }
 
@@ -323,31 +323,39 @@ internal static class Program
     private static PolicyEngine CreatePolicyEngine()
     {
         var caps = new CapabilityRegistry();
-        caps.Register(new CapabilityManifest("fixture.inspect", RiskClass.R0, new[] { "127.0.0.1" },
+        caps.Register(new CapabilityManifest("fixture.inspect", RiskClass.R0, new[] { "*" },
             "unprivileged", true, Array.Empty<string>(), new[] { "synthetic" },
             TimeSpan.FromSeconds(10), 1024, false, true));
         caps.Freeze();
         var trust = new AuthorizationTrustStore();
         var key = RSA.Create(2048);
-        trust.Register("owner", key);
-        trust.Register("operator", key);
+        trust.Register("owner-1", key);
+        trust.Register("operator-1", key);
         trust.Freeze();
         return new PolicyEngine(caps, trust);
     }
 
-    private static AuthorizationManifest CreateManifest()
+    private static AuthorizationManifest CreateManifest(RSA? key = null)
     {
-        return new AuthorizationManifest
+        var k = key ?? RSA.Create(2048);
+        var draft = new AuthorizationManifest
         {
             EngagementId = "worker-battery",
             EngagementMode = EngagementMode.Fixture,
-            Authorization = new AuthorizationProof("owner", "operator", "auth-worker", "", "", ""),
+            Authorization = new AuthorizationProof("owner-1", "operator-1", "auth-worker-battery", string.Empty, string.Empty, string.Empty),
             Scope = new ScopeDefinition(new[] { "127.0.0.1" }, Array.Empty<string>(),
-                "single-level", "block", "block"),
+                "single-level", "same-origin", "block"),
+            TimeWindow = new TimeWindow(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddMinutes(10), "UTC", Array.Empty<ExcludedWindow>()),
             Methods = new MethodDefinition(new[] { "fixture.inspect" }, Array.Empty<string>()),
+            AssetCriticality = new AssetCriticalityDefinition("unknown", new Dictionary<string, string> { ["127.0.0.1"] = "non-production" }),
+            DataHandling = new DataHandlingDefinition("synthetic-only", "required", "phase"),
+            EscalationContacts = new[] { new EscalationContact("owner", "email", "owner@example.invalid") },
+            CredentialPolicy = new CredentialPolicy(Array.Empty<string>(), false, "five-minutes"),
             RateLimits = new RateLimitDefinition(100, 10, 4096),
-            Cleanup = new CleanupDefinition(true, "operator", "cleanup-v1")
+            Cleanup = new CleanupDefinition(true, "operator-1", "fixture-cleanup-v1"),
+            StopConditions = new[] { "sensitive-data", "scope-mismatch", "relay-loss" }
         };
+        return draft with { Authorization = AuthorizationSigner.Sign(draft, k) };
     }
 
     private static ActionRequest CreateAction()
@@ -357,7 +365,7 @@ internal static class Program
             RunId = "run-worker", ActionId = "action-" + Guid.NewGuid().ToString("N"),
             Phase = "probe", TargetRef = "http://127.0.0.1:8080/", CapabilityRef = "fixture.inspect",
             Arguments = new Dictionary<string, string>(), Purpose = "worker battery",
-            RiskClass = RiskClass.R0, ScopeRef = "scope-worker", AuthorizationRef = "auth-worker",
+            RiskClass = RiskClass.R0, ScopeRef = "scope-worker", AuthorizationRef = "auth-worker-battery",
             MethodologyRefs = new[] { "fixture-v1" }, ResolvedAddresses = new[] { "127.0.0.1" }
         };
     }

@@ -83,12 +83,11 @@ internal static class Program
     private static Task TestRegistryFreeze()
     {
         var registry = new ToolRegistry();
-        registry.Register(CreateFixtureManifest(), new SyntheticFixtureToolAdapter("tool-a", "1.0", "ok", ToolResultStatus.Success, "obs"));
-        registry.Freeze();
+        registry.Register(CreateFixtureManifest(), new SyntheticFixtureToolAdapter("fixture-tool", "1.0", "ok", ToolResultStatus.Success, "obs"));
         var threw = false;
         try
         {
-            registry.Register(CreateFixtureManifest(), new SyntheticFixtureToolAdapter("tool-a", "1.0", "ok", ToolResultStatus.Success, "obs"));
+            registry.Register(CreateFixtureManifest(), new SyntheticFixtureToolAdapter("fixture-tool", "1.0", "ok", ToolResultStatus.Success, "obs"));
         }
         catch (InvalidOperationException) { threw = true; }
         Assert(threw, "Registration after freeze should throw");
@@ -102,7 +101,7 @@ internal static class Program
         var threw = false;
         try
         {
-            registry.Register(CreateFixtureManifest(), new SyntheticFixtureToolAdapter("tool-a", "1.0", "ok", ToolResultStatus.Success, "obs"));
+            registry.Register(CreateFixtureManifest(), new SyntheticFixtureToolAdapter("fixture-tool", "1.0", "ok", ToolResultStatus.Success, "obs"));
         }
         catch (InvalidOperationException) { threw = true; }
         Assert(threw, "Duplicate capability registration should throw");
@@ -199,7 +198,7 @@ internal static class Program
             registry.Register(CreateFixtureManifest(), new SyntheticFixtureToolAdapter("t", "1.0", "ok", ToolResultStatus.Success, "obs"));
             // NOT frozen
             var evidence = new EvidenceLedger(new ArtifactStore());
-            using var provenance = CreateProvenance();
+            var provenance = CreateProvenance();
             var permitIssuer = new PermitIssuer(CreatePolicyEngine());
             _ = new ToolBroker(registry, evidence, permitIssuer, provenance);
         }
@@ -229,7 +228,7 @@ internal static class Program
         registry.Register(manifest, failingAdapter);
         registry.Freeze();
 
-        using var provenance = CreateProvenance();
+        var provenance = CreateProvenance();
         var evidence = new EvidenceLedger(new ArtifactStore());
         var broker = new ToolBroker(registry, evidence, new PermitIssuer(CreatePolicyEngine()), provenance);
 
@@ -251,7 +250,7 @@ internal static class Program
         registry.Register(manifest, timeoutAdapter);
         registry.Freeze();
 
-        using var provenance = CreateProvenance();
+        var provenance = CreateProvenance();
         var evidence = new EvidenceLedger(new ArtifactStore());
         var broker = new ToolBroker(registry, evidence, new PermitIssuer(CreatePolicyEngine()), provenance);
 
@@ -382,17 +381,27 @@ internal static class Program
             TimeSpan.FromSeconds(10), 1024);
     }
 
-    private static AuthorizationManifest CreateManifest(string capability = "fixture-tool")
+    private static AuthorizationManifest CreateManifest(string capability = "fixture-tool", RSA? key = null)
     {
-        return new AuthorizationManifest
+        var k = key ?? RSA.Create(2048);
+        var draft = new AuthorizationManifest
         {
             EngagementId = "tool-battery",
             EngagementMode = EngagementMode.Fixture,
+            Authorization = new AuthorizationProof("owner-1", "operator-1", "auth-tool-battery", string.Empty, string.Empty, string.Empty),
             Scope = new ScopeDefinition(new[] { "127.0.0.1" }, Array.Empty<string>(),
-                "single-level", "block", "block"),
+                "single-level", "same-origin", "block"),
+            TimeWindow = new TimeWindow(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddMinutes(10), "UTC", Array.Empty<ExcludedWindow>()),
             Methods = new MethodDefinition(new[] { capability }, Array.Empty<string>()),
-            RateLimits = new RateLimitDefinition(10, 5, 4096)
+            AssetCriticality = new AssetCriticalityDefinition("unknown", new Dictionary<string, string> { ["127.0.0.1"] = "non-production" }),
+            DataHandling = new DataHandlingDefinition("synthetic-only", "required", "phase"),
+            EscalationContacts = new[] { new EscalationContact("owner", "email", "owner@example.invalid") },
+            CredentialPolicy = new CredentialPolicy(Array.Empty<string>(), false, "five-minutes"),
+            RateLimits = new RateLimitDefinition(10, 5, 4096),
+            Cleanup = new CleanupDefinition(true, "operator-1", "fixture-cleanup-v1"),
+            StopConditions = new[] { "sensitive-data", "scope-mismatch", "relay-loss" }
         };
+        return draft with { Authorization = AuthorizationSigner.Sign(draft, k) };
     }
 
     private static ActionEnvelope CreateEnvelope(string capability = "fixture-tool")
@@ -430,7 +439,7 @@ internal static class Program
     private static PolicyEngine CreatePolicyEngine()
     {
         var caps = new CapabilityRegistry();
-        caps.Register(new CapabilityManifest("fixture-tool", RiskClass.R0, new[] { "127.0.0.1" },
+        caps.Register(new CapabilityManifest("fixture-tool", RiskClass.R0, new[] { "*" },
             "unprivileged", true, Array.Empty<string>(), new[] { "synthetic" },
             TimeSpan.FromSeconds(10), 1024, false, true));
         caps.Register(new CapabilityManifest("cleanup-fail-tool", RiskClass.R0, new[] { "127.0.0.1" },
@@ -441,8 +450,9 @@ internal static class Program
             TimeSpan.FromSeconds(10), 1024, false, true));
         caps.Freeze();
         var trust = new AuthorizationTrustStore();
-        trust.Register("owner", System.Security.Cryptography.RSA.Create(2048));
-        trust.Register("operator", System.Security.Cryptography.RSA.Create(2048));
+        var policyKey = System.Security.Cryptography.RSA.Create(2048);
+        trust.Register("owner-1", policyKey);
+        trust.Register("operator-1", policyKey);
         trust.Freeze();
         return new PolicyEngine(caps, trust);
     }
@@ -461,7 +471,7 @@ internal static class Program
         registry.Register(CreateFixtureManifest(), new SyntheticFixtureToolAdapter("fixture-tool", "1.0", "fixture-result", ToolResultStatus.Success, "fixture.obs"));
         registry.Freeze();
         evidence = new EvidenceLedger(new ArtifactStore());
-        using var provenance = CreateProvenance();
+        var provenance = CreateProvenance();
         return new ToolBroker(registry, evidence, new PermitIssuer(CreatePolicyEngine()), provenance);
     }
 

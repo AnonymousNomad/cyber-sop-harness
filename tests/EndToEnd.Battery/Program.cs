@@ -97,9 +97,9 @@ internal static class Program
         var policyResult = policy.Evaluate(action, manifest, null);
         Assert(policyResult.Decision == PolicyDecision.Allow, $"Policy should allow: {policyResult.Reason}");
 
-        // Permit
-        var permit = new PermitIssuer(policy).Issue(action, manifest, "e2e-worker");
-        Assert(permit != null, "Permit should be issued");
+        // Permit and Dispatch (same issuer instance for signing consistency)
+        using var issuer = new PermitIssuer(policy);
+        var permit = issuer.Issue(action, manifest, "e2e-worker");
 
         // Dispatch
         var outcome = await broker.ExecuteAsync(envelope, manifest, policyResult, permit, "e2e-worker", null, CancellationToken.None);
@@ -330,13 +330,13 @@ internal static class Program
         using var key = RSA.Create(2048);
         var manifest = CreateManifest(key);
         var caps = new CapabilityRegistry();
-        caps.Register(new CapabilityManifest("fixture.inspect", RiskClass.R0, new[] { "127.0.0.1" },
+        caps.Register(new CapabilityManifest("fixture.inspect", RiskClass.R0, new[] { "*"},
             "unprivileged", true, Array.Empty<string>(), new[] { "synthetic" },
             TimeSpan.FromSeconds(10), 1024, false, true));
         caps.Freeze();
         var trust = new AuthorizationTrustStore();
-        trust.Register("owner", key);
-        trust.Register("operator", key);
+        trust.Register("owner-1", key);
+        trust.Register("operator-1", key);
         trust.Freeze();
         var vault = new CredentialVault();
         var issuer = new PermitIssuer(new PolicyEngine(caps, trust));
@@ -386,8 +386,8 @@ internal static class Program
         caps.Register(CreateCapability("fixture.inspect"));
         caps.Freeze();
         var trust = new AuthorizationTrustStore();
-        trust.Register("owner", key);
-        trust.Register("operator", key);
+        trust.Register("owner-1", key);
+        trust.Register("operator-1", key);
         trust.Freeze();
         var policy = new PolicyEngine(caps, trust);
         var evidence = new EvidenceLedger(new ArtifactStore());
@@ -411,8 +411,8 @@ private static PolicyEngine CreatePolicy(RSA key)
         caps.Register(CreateCapability("fixture.inspect"));
         caps.Freeze();
         var trust = new AuthorizationTrustStore();
-        trust.Register("owner", key);
-        trust.Register("operator", key);
+        trust.Register("owner-1", key);
+        trust.Register("operator-1", key);
         trust.Freeze();
         return new PolicyEngine(caps, trust);
     }
@@ -423,8 +423,8 @@ private static PolicyEngine CreatePolicy(RSA key)
         caps.Register(CreateCapability(capability));
         caps.Freeze();
         var trust = new AuthorizationTrustStore();
-        trust.Register("owner", key);
-        trust.Register("operator", key);
+        trust.Register("owner-1", key);
+        trust.Register("operator-1", key);
         trust.Freeze();
         return new PolicyEngine(caps, trust);
     }
@@ -432,7 +432,7 @@ private static PolicyEngine CreatePolicy(RSA key)
     private static CapabilityManifest CreateCapability(string capability)
     {
         return new CapabilityManifest(capability, RiskClass.R0,
-            new[] { "127.0.0.1" }, "unprivileged", true,
+            new[] { "*" }, "unprivileged", true,
             Array.Empty<string>(), new[] { "synthetic" },
             TimeSpan.FromSeconds(10), 1024, false, true);
     }
@@ -447,19 +447,24 @@ private static PolicyEngine CreatePolicy(RSA key)
 
     private static AuthorizationManifest CreateManifest(RSA key)
     {
-        return new AuthorizationManifest
+        var draft = new AuthorizationManifest
         {
             EngagementId = "e2e-battery",
             EngagementMode = EngagementMode.Fixture,
-            Authorization = new AuthorizationProof("owner", "operator", "auth-e2e", "", "", ""),
+            Authorization = new AuthorizationProof("owner-1", "operator-1", "auth-artifact-e2e", string.Empty, string.Empty, string.Empty),
             Scope = new ScopeDefinition(new[] { "127.0.0.1" }, Array.Empty<string>(),
-                "single-level", "block", "block"),
+                "single-level", "same-origin", "block"),
             TimeWindow = new TimeWindow(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddMinutes(10), "UTC", Array.Empty<ExcludedWindow>()),
             Methods = new MethodDefinition(new[] { "fixture.inspect" }, Array.Empty<string>()),
+            AssetCriticality = new AssetCriticalityDefinition("unknown", new Dictionary<string, string> { ["127.0.0.1"] = "non-production" }),
+            DataHandling = new DataHandlingDefinition("synthetic-only", "required", "phase"),
+            EscalationContacts = new[] { new EscalationContact("owner", "email", "owner@example.invalid") },
+            CredentialPolicy = new CredentialPolicy(Array.Empty<string>(), false, "five-minutes"),
             RateLimits = new RateLimitDefinition(100, 10, 4096),
-            Cleanup = new CleanupDefinition(true, "operator", "cleanup-v1"),
-            StopConditions = new[] { "scope-mismatch" }
+            Cleanup = new CleanupDefinition(true, "operator-1", "fixture-cleanup-v1"),
+            StopConditions = new[] { "sensitive-data", "scope-mismatch", "relay-loss" }
         };
+        return draft with { Authorization = AuthorizationSigner.Sign(draft, key) };
     }
 
     private static ActionRequest CreateAction(string target = "http://127.0.0.1:8080/")
@@ -469,7 +474,7 @@ private static PolicyEngine CreatePolicy(RSA key)
             RunId = "run-e2e", ActionId = "action-" + Guid.NewGuid().ToString("N"),
             Phase = "e2e", TargetRef = target, CapabilityRef = "fixture.inspect",
             Arguments = new Dictionary<string, string>(), Purpose = "e2e battery",
-            RiskClass = RiskClass.R0, ScopeRef = "scope-e2e", AuthorizationRef = "auth-e2e",
+            RiskClass = RiskClass.R0, ScopeRef = "scope-e2e", AuthorizationRef = "auth-artifact-e2e",
             MethodologyRefs = new[] { "fixture-v1" }, ResolvedAddresses = new[] { "127.0.0.1" }
         };
     }

@@ -133,7 +133,7 @@ internal static class Program
         {
             EngagementId = "probe-battery",
             EngagementMode = mode,
-            Authorization = new AuthorizationProof("owner", "operator", "auth-probe", string.Empty, string.Empty, string.Empty),
+            Authorization = new AuthorizationProof("owner-1", "operator-1", "auth-artifact-1", string.Empty, string.Empty, string.Empty),
             Scope = new ScopeDefinition(
                 new[] { "127.0.0.1", "*.fixture.local", "198.51.100.0/24" },
                 new[] { "blocked.fixture.local" },
@@ -146,9 +146,9 @@ internal static class Program
             DataHandling = new DataHandlingDefinition("synthetic-only", "required", "phase"),
             EscalationContacts = new[] { new EscalationContact("owner", "email", "owner@example.invalid") },
             CredentialPolicy = new CredentialPolicy(Array.Empty<string>(), false, "five-minutes"),
-            RateLimits = new RateLimitDefinition(10, 5, 4096),
-            Cleanup = new CleanupDefinition(true, "operator", "fixture-cleanup-v1"),
-            StopConditions = new[] { "sensitive-data", "scope-mismatch" }
+            RateLimits = new RateLimitDefinition(2, 1, 1024),
+            Cleanup = new CleanupDefinition(true, "operator-1", "fixture-cleanup-v1"),
+            StopConditions = new[] { "sensitive-data", "scope-mismatch", "relay-loss" }
         };
         return draft with { Authorization = AuthorizationSigner.Sign(draft, key) };
     }
@@ -169,7 +169,7 @@ internal static class Program
             ExpectedObservation = "expected",
             RiskClass = risk,
             ScopeRef = "scope-probe",
-            AuthorizationRef = authRef ?? "auth-probe",
+            AuthorizationRef = authRef ?? "auth-artifact-1",
             MethodologyRefs = new[] { "fixture-v1" },
             ApprovalRef = approvalRef,
             ResolvedAddresses = new[] { "127.0.0.1" }
@@ -199,19 +199,20 @@ internal static class Program
     private static (CapabilityRegistry capabilities, AuthorizationTrustStore trustStore) CreateInfrastructure(RSA key)
     {
         var capabilities = new CapabilityRegistry();
+        // AllowedTargetRefs must exactly match request.TargetRef (full URL), or use "*"
         capabilities.Register(new CapabilityManifest("fixture.inspect", RiskClass.R0,
-            new[] { "127.0.0.1", "*.fixture.local", "198.51.100.0/24" },
+            new[] { "*" },
             "unprivileged", true, Array.Empty<string>(), new[] { "synthetic" },
             TimeSpan.FromSeconds(10), 1024, false, true));
         capabilities.Register(new CapabilityManifest("fixture.state", RiskClass.R3,
-            new[] { "127.0.0.1", "*.fixture.local", "198.51.100.0/24" },
+            new[] { "*" },
             "unprivileged", false, Array.Empty<string>(), new[] { "synthetic" },
             TimeSpan.FromSeconds(10), 1024, true, true));
         capabilities.Freeze();
 
         var trustStore = new AuthorizationTrustStore();
-        trustStore.Register("owner", key);
-        trustStore.Register("operator", key);
+        trustStore.Register("owner-1", key);
+        trustStore.Register("operator-1", key);
         trustStore.Freeze();
 
         return (capabilities, trustStore);
@@ -227,13 +228,13 @@ internal static class Program
     {
         var caps = new CapabilityRegistry();
         caps.Register(new CapabilityManifest(capabilityRef, risk,
-            new[] { "127.0.0.1", "*.fixture.local", "198.51.100.0/24" },
+            new[] { "*" },
             "unprivileged", requiresApproval, Array.Empty<string>(), new[] { "synthetic" },
             TimeSpan.FromSeconds(10), 1024, false, true));
         caps.Freeze();
         var trust = new AuthorizationTrustStore();
-        trust.Register("owner", key);
-        trust.Register("operator", key);
+        trust.Register("owner-1", key);
+        trust.Register("operator-1", key);
         trust.Freeze();
         return new PolicyEngine(caps, trust);
     }
@@ -810,7 +811,7 @@ internal static class Program
         var policy = CreatePolicy(key);
         var action = CreateAction();
         var result = policy.Evaluate(action, manifest, null);
-        Assert(result.AuthorizationRef == "auth-probe",
+        Assert(result.AuthorizationRef == "auth-artifact-1",
             $"Authorization ref should be bound, got {result.AuthorizationRef}");
         return Task.CompletedTask;
     }
