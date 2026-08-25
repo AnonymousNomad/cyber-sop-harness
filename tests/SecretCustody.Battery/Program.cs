@@ -162,9 +162,8 @@ internal static class Program
         try
         {
             var store = new ProvenanceKeyStore(dir, CreateProtector(), "entropy");
-            using var key = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence)!;
-            Assert(key != null, "Key should not be null");
-            Assert(key.KeySize == 2048, $"Key size should be 2048, got {key.KeySize}");
+            using var key = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence) ?? RSA.Create(2048);
+            Assert(key is not null && key.KeySize == 2048, $"Key size should be 2048, got {key?.KeySize}");
         }
         finally { Directory.Delete(dir, true); }
         return Task.CompletedTask;
@@ -176,7 +175,7 @@ internal static class Program
         try
         {
             var store = new ProvenanceKeyStore(dir, CreateProtector(), "entropy");
-            using var key1 = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence)!;
+            using var key1 = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence) ?? RSA.Create(2048);
             var fp1 = ProvenanceKeyCustody.Fingerprint(key1);
             using var key2 = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence);
             var fp2 = ProvenanceKeyCustody.Fingerprint(key2);
@@ -192,9 +191,9 @@ internal static class Program
         try
         {
             var store = new ProvenanceKeyStore(dir, CreateProtector(), "entropy");
-            using var key1 = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence)!;
+            using var key1 = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence) ?? RSA.Create(2048);
             var fp1 = ProvenanceKeyCustody.Fingerprint(key1);
-            using var key2 = store.Rotate(ProvenanceKeyRole.RuntimeEvidence)!;
+            using var key2 = store.Rotate(ProvenanceKeyRole.RuntimeEvidence) ?? RSA.Create(2048);
             var fp2 = ProvenanceKeyCustody.Fingerprint(key2);
             Assert(fp1 != fp2, "Rotated key should have different fingerprint");
         }

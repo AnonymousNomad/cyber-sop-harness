@@ -215,7 +215,7 @@ internal static class Program
         var manifest = CreateManifest();
         var policy = CreateAllowPolicy(envelope, manifest);
         var engine = CreatePolicyEngine();
-        var permit = engine.Issue(CreateActionRequest(), manifest, "broker-worker");
+        var permit = new PermitIssuer(engine).Issue(CreateActionRequest(), manifest, "broker-worker");
         var outcome = await broker.ExecuteAsync(envelope, manifest, policy, permit, "broker-worker", null, CancellationToken.None);
         Assert(outcome.Dispatched, $"Fixture dispatch should succeed, failure: {outcome.FailureReason}");
         Assert(outcome.Evidence.Status == ToolResultStatus.Success, $"Should succeed, got {outcome.Evidence.Status}");
@@ -237,7 +237,7 @@ internal static class Program
         var fullManifest = CreateManifest("cleanup-fail-tool");
         var policy = CreateAllowPolicy(envelope, fullManifest);
         var engine = CreatePolicyEngine();
-        var permit = engine.Issue(CreateActionRequest("cleanup-fail-tool"), fullManifest, "cleanup-worker");
+        var permit = new PermitIssuer(engine).Issue(CreateActionRequest("cleanup-fail-tool"), fullManifest, "cleanup-worker");
 
         var outcome = await broker.ExecuteAsync(envelope, fullManifest, policy, permit, "cleanup-worker", null, CancellationToken.None);
         Assert(outcome.Evidence.CleanupResult == "FAILED", $"Cleanup failure should degrade to FAILED, got {outcome.Evidence.CleanupResult}");
@@ -259,7 +259,7 @@ internal static class Program
         var fullManifest = CreateManifest("timeout-cleanup-tool");
         var policy = CreateAllowPolicy(envelope, fullManifest);
         var engine = CreatePolicyEngine();
-        var permit = engine.Issue(CreateActionRequest("timeout-cleanup-tool"), fullManifest, "timeout-worker");
+        var permit = new PermitIssuer(engine).Issue(CreateActionRequest("timeout-cleanup-tool"), fullManifest, "timeout-worker");
 
         var outcome = await broker.ExecuteAsync(envelope, fullManifest, policy, permit, "timeout-worker", null, CancellationToken.None);
         Assert(outcome.Evidence.CleanupResult == "FAILED", $"Cleanup timeout should degrade to FAILED, got {outcome.Evidence.CleanupResult}");
@@ -546,8 +546,10 @@ internal static class Program
         public string ToolVersion { get; }
         public Task<ToolAdapterResult> ExecuteAsync(ToolExecutionContext context, CancellationToken ct) =>
             Task.FromResult(new ToolAdapterResult(ToolResultStatus.Success, 0, Encoding.UTF8.GetBytes("ok"), new[] { "obs" }, Array.Empty<string>(), "PENDING"));
-        public async Task<string> CleanupAsync(ToolExecutionContext context, ToolAdapterResult result, CancellationToken ct) =>
+        public async Task<string> CleanupAsync(ToolExecutionContext context, ToolAdapterResult result, CancellationToken ct) {
             await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            return "UNREACHABLE";
+        }
     }
 
     private sealed class NullObservationAdapter : IToolAdapter

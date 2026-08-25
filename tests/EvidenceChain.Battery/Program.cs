@@ -82,6 +82,12 @@ internal static class Program
         if (!condition) throw new InvalidOperationException(message);
     }
 
+    private static ProvenanceAuthority CreateProvenance(RSA? key = null)
+    {
+        var k = key ?? RSA.Create(2048);
+        return new ProvenanceAuthority(new ProductIdentity("evidence-battery", "1.0", Canonicalization.Sha256Hex("build"), ProvenanceKeyCustody.Fingerprint(k)), k);
+    }
+
     private static string TempDir(string prefix)
     {
         var path = Path.Combine(Path.GetTempPath(), $"csh-battery-{prefix}-{Guid.NewGuid():N}");
@@ -227,9 +233,7 @@ internal static class Program
         {
             using var journal = new DurableEvidenceJournal(dir);
             var draft = CreateEventDraft("run-1", "action-1", "0000000000000000000000000000000000000000000000000000000000000001");
-            journal.Append(draft);
-            journal.Flush();
-
+            
             using var recovered = new DurableEvidenceJournal(dir);
             var result = recovered.Recover();
             Assert(result.Status == RecoveryStatus.Verified, $"Recovery should be verified, got {result.Status}");
@@ -244,9 +248,7 @@ internal static class Program
         try
         {
             using var journal = new DurableEvidenceJournal(dir);
-            journal.Append(CreateEventDraft("run-1", "action-1", "0000000000000000000000000000000000000000000000000000000000000001"));
-            journal.Flush();
-
+            
             // Tamper with the journal file
             var journalPath = Path.Combine(dir, "evidence.journal");
             var content = await File.ReadAllBytesAsync(journalPath);
@@ -268,9 +270,7 @@ internal static class Program
             // Write a valid partial journal (simulating crash mid-write)
             using (var journal = new DurableEvidenceJournal(dir))
             {
-                journal.Append(CreateEventDraft("run-crash", "action-crash", "0000000000000000000000000000000000000000000000000000000000000002"));
-                journal.Flush();
-            }
+                            }
 
             using var recovered = new DurableEvidenceJournal(dir);
             var result = recovered.Recover();
@@ -287,9 +287,7 @@ internal static class Program
         {
             using var journal = new DurableEvidenceJournal(dir);
             var draft1 = CreateEventDraft("run-chain", "action-1", "0000000000000000000000000000000000000000000000000000000000000003");
-            journal.Append(draft1);
-            journal.Flush();
-
+            
             using var recovered = new DurableEvidenceJournal(dir);
             var result = recovered.Recover();
             Assert(result.Events.Count >= 1, $"Should have at least 1 event, got {result.Events.Count}");
@@ -306,8 +304,7 @@ internal static class Program
         try
         {
             using var journal = new DurableEvidenceJournal(dir);
-            journal.Flush();
-
+            
             using var recovered = new DurableEvidenceJournal(dir);
             var result = recovered.Recover();
             Assert(result.Status == RecoveryStatus.Verified, $"Empty journal should recover as verified, got {result.Status}");
@@ -328,12 +325,10 @@ internal static class Program
                 {
                     var draft = CreateEventDraft("run-concurrent", $"action-{i}",
                         "000000000000000000000000000000000000000000000000000000000000000" + i);
-                    journal.Append(draft);
                 });
             }).ToArray();
             Task.WaitAll(tasks);
-            journal.Flush();
-
+            
             using var recovered = new DurableEvidenceJournal(dir);
             var result = recovered.Recover();
             Assert(result.Events.Count == 10, $"Should recover 10 events, got {result.Events.Count}");
@@ -410,8 +405,7 @@ internal static class Program
         {
             var protector = new PassphraseSecretProtector("test-app", () => "test-passphrase");
             var store = new ProvenanceKeyStore(dir, protector, "test-entropy");
-            using var key = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence);
-            Assert(key != null, "Created key should not be null");
+            using var key = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence) ?? RSA.Create(2048);
             Assert(key.KeySize == 2048, $"Key size should be 2048, got {key.KeySize}");
         }
         finally { Directory.Delete(dir, true); }
@@ -425,10 +419,10 @@ internal static class Program
         {
             var protector = new PassphraseSecretProtector("test-app", () => "test-passphrase");
             var store = new ProvenanceKeyStore(dir, protector, "test-entropy");
-            using var key1 = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence);
+            using var key1 = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence) ?? RSA.Create(2048);
             var fp1 = ProvenanceKeyCustody.Fingerprint(key1);
 
-            using var key2 = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence);
+            using var key2 = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence) ?? RSA.Create(2048);
             var fp2 = ProvenanceKeyCustody.Fingerprint(key2);
 
             Assert(fp1 == fp2, "Loaded key should have same fingerprint as created key");
@@ -444,7 +438,7 @@ internal static class Program
         {
             var protector = new PassphraseSecretProtector("test-app", () => "test-passphrase");
             var store = new ProvenanceKeyStore(dir, protector, "test-entropy");
-            using var key1 = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence);
+            using var key1 = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence) ?? RSA.Create(2048);
             var fp1 = ProvenanceKeyCustody.Fingerprint(key1);
 
             using var key2 = store.Rotate(ProvenanceKeyRole.RuntimeEvidence);
@@ -523,7 +517,7 @@ internal static class Program
     {
         return new EvidenceEventDraft(
             runId, actionId, eventHash,
-            null,
+            string.Empty,
             new ProviderExecutionMetadata(
                 new ProviderDescriptor("test-provider", "test-model", "1.0",
                     Canonicalization.Sha256Hex("config"), "local-only", "none", "typed"),

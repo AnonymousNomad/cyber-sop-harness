@@ -282,7 +282,7 @@ internal static class Program
 
         Assert(event1 != null, "First event should be recorded");
         Assert(event2 != null, "Second event should be recorded");
-        Assert(event1.EventId != event2.EventId, "Events should have distinct IDs");
+        Assert(event1 != null && event2 != null && event1.ResultEventId != event2.ResultEventId, "Events should have distinct IDs");
         return Task.CompletedTask;
     }
 
@@ -292,9 +292,9 @@ internal static class Program
         var draft1 = CreateEventDraft("chain-run", "chain-action-1");
         var draft2 = CreateEventDraft("chain-run", "chain-action-2");
         var event1 = evidence.Append(draft1);
-        var event2 = evidence.Append(draft2 with { ParentEventId = event1.EventId });
+        var event2 = evidence.Append(draft2 with { ParentEventId = event1.ResultEventId });
 
-        Assert(event2.ParentEventId == event1.EventId, "Chain linkage should be preserved");
+        Assert(event2.ParentEventId == event1.ResultEventId, "Chain linkage should be preserved");
         Assert(!string.IsNullOrEmpty(event2.PreviousEventHash), "Previous event hash should be set");
         return Task.CompletedTask;
     }
@@ -383,7 +383,7 @@ internal static class Program
         EvidenceLedger evidence, ProvenanceAuthority provenance, ToolBroker broker) CreatePipeline(RSA key)
     {
         var caps = new CapabilityRegistry();
-        caps.Register(CreateToolManifest("fixture.inspect"));
+        caps.Register(CreateCapability("fixture.inspect"));
         caps.Freeze();
         var trust = new AuthorizationTrustStore();
         trust.Register("owner", key);
@@ -408,7 +408,7 @@ internal static class Program
 private static PolicyEngine CreatePolicy(RSA key)
     {
         var caps = new CapabilityRegistry();
-        caps.Register(CreateToolManifest("fixture.inspect"));
+        caps.Register(CreateCapability("fixture.inspect"));
         caps.Freeze();
         var trust = new AuthorizationTrustStore();
         trust.Register("owner", key);
@@ -420,13 +420,21 @@ private static PolicyEngine CreatePolicy(RSA key)
     private static PolicyEngine CreatePolicyWithCapability(RSA key, string capability)
     {
         var caps = new CapabilityRegistry();
-        caps.Register(CreateToolManifest(capability));
+        caps.Register(CreateCapability(capability));
         caps.Freeze();
         var trust = new AuthorizationTrustStore();
         trust.Register("owner", key);
         trust.Register("operator", key);
         trust.Freeze();
         return new PolicyEngine(caps, trust);
+    }
+
+    private static CapabilityManifest CreateCapability(string capability)
+    {
+        return new CapabilityManifest(capability, RiskClass.R0,
+            new[] { "127.0.0.1" }, "unprivileged", true,
+            Array.Empty<string>(), new[] { "synthetic" },
+            TimeSpan.FromSeconds(10), 1024, false, true);
     }
 
     private static ToolCapabilityManifest CreateToolManifest(string capability)
@@ -480,7 +488,7 @@ private static PolicyEngine CreatePolicy(RSA key)
     {
         return new EvidenceEventDraft(
             runId, actionId, Canonicalization.Sha256Hex(actionId),
-            null,
+            string.Empty,
             new ProviderExecutionMetadata(
                 new ProviderDescriptor("p", "m", "1.0", Canonicalization.Sha256Hex("c"), "local-only", "none", "typed"),
                 Canonicalization.Sha256Hex("o"), TimeSpan.FromMilliseconds(1), 10, ProviderFailureClass.None),
