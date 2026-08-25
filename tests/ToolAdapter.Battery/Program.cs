@@ -177,7 +177,7 @@ internal static class Program
             RiskClass.R0, new[] { "method-v1" });
         var outcome = await broker.ExecuteAsync(envelope, manifest, policy, null, "worker-1", null, CancellationToken.None);
         Assert(!outcome.Dispatched, "Policy deny should not dispatch");
-        Assert(outcome.Evidence.ResultStatus == ToolResultStatus.Blocked, $"Evidence should be blocked, got {outcome.Evidence.ResultStatus}");
+        Assert(outcome.Evidence.Status == ToolResultStatus.Blocked, $"Evidence should be blocked, got {outcome.Evidence.Status}");
     }
 
     private static async Task TestBrokerNoPermit()
@@ -218,7 +218,7 @@ internal static class Program
         var permit = engine.Issue(CreateActionRequest(), manifest, "broker-worker");
         var outcome = await broker.ExecuteAsync(envelope, manifest, policy, permit, "broker-worker", null, CancellationToken.None);
         Assert(outcome.Dispatched, $"Fixture dispatch should succeed, failure: {outcome.FailureReason}");
-        Assert(outcome.Evidence.ResultStatus == ToolResultStatus.Success, $"Should succeed, got {outcome.Evidence.ResultStatus}");
+        Assert(outcome.Evidence.Status == ToolResultStatus.Success, $"Should succeed, got {outcome.Evidence.Status}");
     }
 
     private static async Task TestBrokerCleanupFailure()
@@ -526,14 +526,9 @@ internal static class Program
             capability, "test-network-worker");
     }
 
-    private static void Assert(bool condition, string message)
-    {
-        if (!condition) throw new InvalidOperationException(message);
-    }
+        // === ADAPTER VARIANTS ===
 
-    // === ADAPTER VARIANTS ===
-
-    private sealed class FailingCleanupAdapter : ILocalFixtureToolAdapter
+    private sealed class FailingCleanupAdapter : IToolAdapter
     {
         public FailingCleanupAdapter(string toolRef, string toolVersion) { ToolRef = toolRef; ToolVersion = toolVersion; }
         public string ToolRef { get; }
@@ -544,7 +539,7 @@ internal static class Program
             throw new InvalidOperationException("cleanup failed by design");
     }
 
-    private sealed class TimeoutCleanupAdapter : ILocalFixtureToolAdapter
+    private sealed class TimeoutCleanupAdapter : IToolAdapter
     {
         public TimeoutCleanupAdapter(string toolRef, string toolVersion) { ToolRef = toolRef; ToolVersion = toolVersion; }
         public string ToolRef { get; }
@@ -555,7 +550,7 @@ internal static class Program
             await Task.Delay(Timeout.InfiniteTimeSpan, ct);
     }
 
-    private sealed class NullObservationAdapter : ILocalFixtureToolAdapter
+    private sealed class NullObservationAdapter : IToolAdapter
     {
         public NullObservationAdapter(string toolRef, string toolVersion) { ToolRef = toolRef; ToolVersion = toolVersion; }
         public string ToolRef { get; }

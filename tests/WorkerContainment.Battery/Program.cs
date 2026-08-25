@@ -149,7 +149,7 @@ internal static class Program
         var engine = CreatePolicyEngine();
         var manifest = CreateManifest();
         var action = CreateAction();
-        var permit = engine.Issue(action, manifest, "permit-worker");
+        var permit = new PermitIssuer(engine).Issue(action, manifest, "permit-worker");
         Assert(permit != null, "Permit should not be null");
         Assert(permit.ConsumptionState == PermitConsumptionState.Unused, $"Permit should be unused, got {permit.ConsumptionState}");
         Assert(permit.ExpiresAt > DateTimeOffset.UtcNow, "Permit should not be expired");
@@ -163,7 +163,7 @@ internal static class Program
         var action = CreateAction();
         var permit = engine.Issue(action, manifest, "consume-worker");
         var policy = CreatePolicyResult(action, manifest);
-        var consumed = engine.TryClaimConsumed(permit, action, manifest, "consume-worker", policy, null);
+        var consumed = new PermitIssuer(engine).TryClaimConsumed(permit, action, manifest, "consume-worker", policy, null);
         Assert(consumed, "First claim should succeed");
         Assert(permit.ConsumptionState == PermitConsumptionState.Consumed, $"Should be consumed, got {permit.ConsumptionState}");
     }
@@ -175,8 +175,8 @@ internal static class Program
         var action = CreateAction();
         var permit = engine.Issue(action, manifest, "replay-worker");
         var policy = CreatePolicyResult(action, manifest);
-        engine.TryClaimConsumed(permit, action, manifest, "replay-worker", policy, null);
-        var replayed = engine.TryClaimConsumed(permit, action, manifest, "replay-worker", policy, null);
+        new PermitIssuer(engine).TryClaimConsumed(permit, action, manifest, "replay-worker", policy, null);
+        var replayed = new PermitIssuer(engine).TryClaimConsumed(permit, action, manifest, "replay-worker", policy, null);
         Assert(!replayed, "Replay should be rejected");
     }
 
@@ -188,7 +188,7 @@ internal static class Program
         var permit = engine.Issue(action, manifest, "expiry-worker");
         permit = permit with { ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1) };
         var policy = CreatePolicyResult(action, manifest);
-        var consumed = engine.TryClaimConsumed(permit, action, manifest, "expiry-worker", policy, null);
+        var consumed = new PermitIssuer(engine).TryClaimConsumed(permit, action, manifest, "expiry-worker", policy, null);
         Assert(!consumed, "Expired permit should not be consumable");
     }
 
@@ -199,7 +199,7 @@ internal static class Program
         var action = CreateAction();
         var permit = engine.Issue(action, manifest, "worker-a");
         var policy = CreatePolicyResult(action, manifest);
-        var consumed = engine.TryClaimConsumed(permit, action, manifest, "worker-b", policy, null);
+        var consumed = new PermitIssuer(engine).TryClaimConsumed(permit, action, manifest, "worker-b", policy, null);
         Assert(!consumed, "Worker mismatch should block consumption");
     }
 
@@ -208,16 +208,16 @@ internal static class Program
     private static Task TestRateLimitWithin()
     {
         var limiter = new RateLimiter(new RateLimitDefinition(100, 10, 4096));
-        var lease = limiter.Acquire("target", "worker", 100);
+        limiter.TryAcquire("target", 100, out var lease);
         Assert(lease != null, "Rate lease within budget should succeed");
-        lease.Dispose();
+        lease?.Dispose();
         return Task.CompletedTask;
     }
 
     private static Task TestRateLimitOver()
     {
         var limiter = new RateLimiter(new RateLimitDefinition(1, 1, 4096));
-        var lease1 = limiter.Acquire("target", "worker-1", 100);
+        limiter.TryAcquire("target", 100, out var lease1);
         // With concurrency=1, second concurrent should fail or queue
         // The actual behavior depends on implementation; we just verify no crash
         lease1?.Dispose();
@@ -227,8 +227,8 @@ internal static class Program
     private static Task TestRateLimitConcurrency()
     {
         var limiter = new RateLimiter(new RateLimitDefinition(1000, 2, 4096));
-        var lease1 = limiter.Acquire("t", "w1", 100);
-        var lease2 = limiter.Acquire("t", "w2", 100);
+        limiter.TryAcquire("t", 100, out var lease1);
+        limiter.TryAcquire("t", 100, out var lease2);
         Assert(lease1 != null, "First lease should succeed");
         Assert(lease2 != null, "Second lease within concurrency should succeed");
         lease1?.Dispose();
@@ -287,9 +287,9 @@ internal static class Program
     {
         var vault = new CredentialVault();
         var handle = vault.Store("secret", DateTimeOffset.UtcNow.AddMinutes(5));
-        vault.Revoke(handle.Handle);
+        vault.Revoke(handle);
         var threw = false;
-        try { vault.Use(handle.Handle, _ => { }); }
+        try { vault.Use<object>(handle, _ => null!); }
         catch (InvalidOperationException) { threw = true; }
         Assert(threw, "Revoked credential should throw on retrieval");
         return Task.CompletedTask;

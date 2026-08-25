@@ -468,7 +468,7 @@ internal static class Program
         using var key = CreateKey();
         var manifest = CreateManifest(key, DateTimeOffset.UtcNow);
         var policy = CreatePolicy(key);
-        var action = CreateAction(RiskClass: RiskClass.R0);
+        var action = CreateAction(risk: RiskClass.R0);
         var result = policy.Evaluate(action, manifest, null);
         Assert(result.Decision == PolicyDecision.Allow, $"R0 should allow, got {result.Decision}");
         return Task.CompletedTask;
@@ -479,7 +479,7 @@ internal static class Program
         using var key = CreateKey();
         var manifest = CreateManifest(key, DateTimeOffset.UtcNow);
         var policy = CreatePolicy(key);
-        var action = CreateAction(RiskClass: RiskClass.R1);
+        var action = CreateAction(risk: RiskClass.R1);
         var result = policy.Evaluate(action, manifest, null);
         Assert(result.Decision == PolicyDecision.Allow, $"R1 should allow, got {result.Decision}");
         return Task.CompletedTask;
@@ -490,7 +490,7 @@ internal static class Program
         using var key = CreateKey();
         var manifest = CreateManifest(key, DateTimeOffset.UtcNow);
         var policy = CreatePolicy(key);
-        var action = CreateAction(RiskClass: RiskClass.R2);
+        var action = CreateAction(risk: RiskClass.R2);
         var result = policy.Evaluate(action, manifest, null);
         Assert(result.Decision == PolicyDecision.Allow, $"R2 should allow, got {result.Decision}");
         return Task.CompletedTask;
@@ -501,7 +501,7 @@ internal static class Program
         using var key = CreateKey();
         var manifest = CreateManifest(key, DateTimeOffset.UtcNow);
         var policy = CreatePolicy(key);
-        var action = CreateAction(RiskClass: RiskClass.R3, approvalRef: "approval-r3");
+        var action = CreateAction(risk: RiskClass.R3, approvalRef: "approval-r3");
         var approval = CreateApproval(action, manifest, key, DateTimeOffset.UtcNow);
         var result = policy.Evaluate(action, manifest, approval);
         Assert(result.Decision == PolicyDecision.Allow, $"R3 with valid approval should allow, got {result.Decision}");
@@ -513,7 +513,7 @@ internal static class Program
         using var key = CreateKey();
         var manifest = CreateManifest(key, DateTimeOffset.UtcNow);
         var policy = CreatePolicy(key);
-        var action = CreateAction(RiskClass: RiskClass.R3);
+        var action = CreateAction(risk: RiskClass.R3);
         var result = policy.Evaluate(action, manifest, null);
         Assert(result.Decision == PolicyDecision.Block, $"R3 without approval should block, got {result.Decision}");
         return Task.CompletedTask;
@@ -524,7 +524,7 @@ internal static class Program
         using var key = CreateKey();
         var manifest = CreateManifest(key, DateTimeOffset.UtcNow);
         var policy = CreatePolicy(key);
-        var action = CreateAction(RiskClass: RiskClass.R4, approvalRef: "approval-r4");
+        var action = CreateAction(risk: RiskClass.R4, approvalRef: "approval-r4");
         var approval = CreateApproval(action, manifest, key, DateTimeOffset.UtcNow);
         var result = policy.Evaluate(action, manifest, approval);
         Assert(result.Decision == PolicyDecision.Block, $"R4 should always block, got {result.Decision}");
@@ -538,7 +538,7 @@ internal static class Program
         using var key = CreateKey();
         var manifest = CreateManifest(key, DateTimeOffset.UtcNow);
         var policy = CreatePolicy(key);
-        var action = CreateAction(RiskClass: RiskClass.R3, approvalRef: "approval-valid");
+        var action = CreateAction(risk: RiskClass.R3, approvalRef: "approval-valid");
         var approval = CreateApproval(action, manifest, key, DateTimeOffset.UtcNow);
         var result = policy.Evaluate(action, manifest, approval);
         Assert(result.Decision == PolicyDecision.Allow, $"Valid approval should allow, got {result.Decision}");
@@ -550,7 +550,7 @@ internal static class Program
         using var key = CreateKey();
         var manifest = CreateManifest(key, DateTimeOffset.UtcNow);
         var policy = CreatePolicy(key);
-        var action = CreateAction(RiskClass: RiskClass.R3, approvalRef: "approval-expired");
+        var action = CreateAction(risk: RiskClass.R3, approvalRef: "approval-expired");
         var approval = CreateApproval(action, manifest, key, DateTimeOffset.UtcNow)
             with { ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-5) };
         var result = policy.Evaluate(action, manifest, approval);
@@ -563,7 +563,7 @@ internal static class Program
         using var key = CreateKey();
         var manifest = CreateManifest(key, DateTimeOffset.UtcNow);
         var policy = CreatePolicy(key);
-        var action = CreateAction(RiskClass: RiskClass.R3, approvalRef: "approval-wrong");
+        var action = CreateAction(risk: RiskClass.R3, approvalRef: "approval-wrong");
         var approval = CreateApproval(action, manifest, key, DateTimeOffset.UtcNow)
             with { ApproverRef = "attacker" };
         var result = policy.Evaluate(action, manifest, approval);
@@ -576,7 +576,7 @@ internal static class Program
         using var key = CreateKey();
         var manifest = CreateManifest(key, DateTimeOffset.UtcNow);
         var policy = CreatePolicy(key);
-        var action = CreateAction(RiskClass: RiskClass.R3, approvalRef: "approval-tampered");
+        var action = CreateAction(risk: RiskClass.R3, approvalRef: "approval-tampered");
         var approval = CreateApproval(action, manifest, key, DateTimeOffset.UtcNow, overrideHash: "0000000000000000000000000000000000000000000000000000000000000000");
         var result = policy.Evaluate(action, manifest, approval);
         Assert(result.Decision == PolicyDecision.Block, $"Hash mismatch should block, got {result.Decision}");
@@ -588,7 +588,7 @@ internal static class Program
         using var key = CreateKey();
         var manifest = CreateManifest(key, DateTimeOffset.UtcNow);
         var policy = CreatePolicy(key);
-        var action = CreateAction(RiskClass: RiskClass.R3, approvalRef: "approval-nonce");
+        var action = CreateAction(risk: RiskClass.R3, approvalRef: "approval-nonce");
         var approval = CreateApproval(action, manifest, key, DateTimeOffset.UtcNow)
             with { Nonce = string.Empty };
         var result = policy.Evaluate(action, manifest, approval);

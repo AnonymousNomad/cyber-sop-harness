@@ -162,7 +162,7 @@ internal static class Program
         try
         {
             var store = new ProvenanceKeyStore(dir, CreateProtector(), "entropy");
-            using var key = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence);
+            using var key = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence)!;
             Assert(key != null, "Key should not be null");
             Assert(key.KeySize == 2048, $"Key size should be 2048, got {key.KeySize}");
         }
@@ -176,7 +176,7 @@ internal static class Program
         try
         {
             var store = new ProvenanceKeyStore(dir, CreateProtector(), "entropy");
-            using var key1 = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence);
+            using var key1 = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence)!;
             var fp1 = ProvenanceKeyCustody.Fingerprint(key1);
             using var key2 = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence);
             var fp2 = ProvenanceKeyCustody.Fingerprint(key2);
@@ -192,9 +192,9 @@ internal static class Program
         try
         {
             var store = new ProvenanceKeyStore(dir, CreateProtector(), "entropy");
-            using var key1 = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence);
+            using var key1 = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence)!;
             var fp1 = ProvenanceKeyCustody.Fingerprint(key1);
-            using var key2 = store.Rotate(ProvenanceKeyRole.RuntimeEvidence);
+            using var key2 = store.Rotate(ProvenanceKeyRole.RuntimeEvidence)!;
             var fp2 = ProvenanceKeyCustody.Fingerprint(key2);
             Assert(fp1 != fp2, "Rotated key should have different fingerprint");
         }
@@ -226,9 +226,9 @@ internal static class Program
     {
         var vault = new CredentialVault();
         var handle = vault.Store("secret", DateTimeOffset.UtcNow.AddMinutes(5));
-        vault.Revoke(handle.Handle);
+        vault.Revoke(handle);
         var threw = false;
-        try { vault.Use<bool>(handle.Handle, _ => true); }
+        try { vault.Use<bool>(handle, _ => true); }
         catch (InvalidOperationException) { threw = true; }
         Assert(threw, "Revoked credential should throw");
         return Task.CompletedTask;
@@ -238,7 +238,7 @@ internal static class Program
     {
         var vault = new CredentialVault();
         var tasks = Enumerable.Range(0, 5).Select(i =>
-            Task.Run(() => vault.Store($"cred-{i}", Encoding.UTF8.GetBytes($"secret-{i}"))));
+            Task.Run(() => vault.Store($"secret-{i}", DateTimeOffset.UtcNow.AddMinutes(5))));
         var handles = Task.WhenAll(tasks).Result;
         Assert(handles.Distinct().Count() == handles.Length, "All handles should be distinct");
         return Task.CompletedTask;

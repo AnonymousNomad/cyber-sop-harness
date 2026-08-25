@@ -104,7 +104,7 @@ internal static class Program
         // Dispatch
         var outcome = await broker.ExecuteAsync(envelope, manifest, policyResult, permit, "e2e-worker", null, CancellationToken.None);
         Assert(outcome.Dispatched, $"Dispatch should succeed: {outcome.FailureReason}");
-        Assert(outcome.Evidence.ResultStatus == ToolResultStatus.Success, $"Evidence should be success, got {outcome.Evidence.ResultStatus}");
+        Assert(outcome.Evidence.Status == ToolResultStatus.Success, $"Evidence should be success, got {outcome.Evidence.Status}");
 
         // Provenance
         Assert(!string.IsNullOrEmpty(outcome.Provenance.SignatureBase64), "Provenance should have signature");
@@ -125,7 +125,7 @@ internal static class Program
 
         var outcome = await broker.ExecuteAsync(envelope, manifest, blockedPolicy, null, "worker", null, CancellationToken.None);
         Assert(!outcome.Dispatched, "Blocked policy should not dispatch");
-        Assert(outcome.Evidence.ResultStatus == ToolResultStatus.Blocked, $"Should be blocked, got {outcome.Evidence.ResultStatus}");
+        Assert(outcome.Evidence.Status == ToolResultStatus.Blocked, $"Should be blocked, got {outcome.Evidence.Status}");
     }
 
     private static async Task TestPermitReplayEvidence()
@@ -147,7 +147,7 @@ internal static class Program
         var envelope2 = CreateEnvelope(action);
         var outcome2 = await broker.ExecuteAsync(envelope2, manifest, policyResult, permit, "replay-worker", null, CancellationToken.None);
         Assert(!outcome2.Dispatched, "Replay should be blocked");
-        Assert(outcome2.Evidence.ResultStatus == ToolResultStatus.Blocked, $"Replay evidence should be blocked, got {outcome2.Evidence.ResultStatus}");
+        Assert(outcome2.Evidence.Status == ToolResultStatus.Blocked, $"Replay evidence should be blocked, got {outcome2.Evidence.Status}");
     }
 
     private static async Task TestOutOfScopeEvidence()
@@ -228,7 +228,7 @@ internal static class Program
 
         Assert(outcomeA.Dispatched, "Tool A should dispatch");
         Assert(outcomeB.Dispatched, "Tool B should dispatch");
-        Assert(outcomeA.Evidence.ResultStatus == outcomeB.Evidence.ResultStatus,
+        Assert(outcomeA.Evidence.Status == outcomeB.Evidence.Status,
             "Tool swap should produce same status");
     }
 
@@ -258,7 +258,7 @@ internal static class Program
         var outcome = await broker.ExecuteAsync(fabEnvelope, fabManifest, fabPolicy, fabPermit, "fab-worker", null, CancellationToken.None);
 
         Assert(outcome.Dispatched, "Dispatch should succeed");
-        Assert(outcome.Evidence.RawOutput != null, "Raw output should be recorded");
+        Assert(outcome.Evidence.RawSha256 != null, "Raw output should be recorded");
     }
 
     private static Task TestEnvelopeHashMismatch()
@@ -399,7 +399,13 @@ internal static class Program
         return (policy, caps, trust, evidence, provenance, broker);
     }
 
-    private static PolicyEngine CreatePolicy(RSA key)
+        private static ProvenanceAuthority CreateProvenance(RSA? key = null)
+    {
+        var k = key ?? RSA.Create(2048);
+        return new ProvenanceAuthority(new ProductIdentity("e2e-battery", "1.0", Canonicalization.Sha256Hex("e2e-build"), ProvenanceKeyCustody.Fingerprint(k)), k);
+    }
+
+private static PolicyEngine CreatePolicy(RSA key)
     {
         var caps = new CapabilityRegistry();
         caps.Register(CreateToolManifest("fixture.inspect"));

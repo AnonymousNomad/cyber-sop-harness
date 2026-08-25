@@ -348,7 +348,7 @@ internal static class Program
     {
         using var key = RSA.Create(2048);
         var authority = CreateProvenance(key);
-        var artifacts = new ArtifactStore());
+        var artifacts = new ArtifactStore();
         var ledger = new EvidenceLedger(artifacts);
         var draft = CreateEventDraft("run-prov", "action-prov", "000000000000000000000000000000000000000000000000000000000000000a");
         var evidence = ledger.Append(draft);
@@ -364,7 +364,7 @@ internal static class Program
         using var key = RSA.Create(2048);
         using var wrongKey = RSA.Create(2048);
         var authority = CreateProvenance(key);
-        var artifacts = new ArtifactStore());
+        var artifacts = new ArtifactStore();
         var ledger = new EvidenceLedger(artifacts);
         var draft = CreateEventDraft("run-tamper", "action-tamper", "000000000000000000000000000000000000000000000000000000000000000b");
         var evidence = ledger.Append(draft);
@@ -383,13 +383,13 @@ internal static class Program
         var authority2 = CreateProvenance(key2);
         var manifest = CreateTestManifest();
 
-        var artifacts1 = new ArtifactStore());
+        var artifacts1 = new ArtifactStore();
         var ledger1 = new EvidenceLedger(artifacts1);
         var draft1 = CreateEventDraft("run-rot", "action-1", "000000000000000000000000000000000000000000000000000000000000000c");
         var evidence1 = ledger1.Append(draft1);
         var stamp1 = authority1.Issue(evidence1, manifest);
 
-        var artifacts2 = new ArtifactStore());
+        var artifacts2 = new ArtifactStore();
         var ledger2 = new EvidenceLedger(artifacts2);
         var draft2 = CreateEventDraft("run-rot", "action-2", "000000000000000000000000000000000000000000000000000000000000000d");
         var evidence2 = ledger2.Append(draft2);
