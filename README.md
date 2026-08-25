@@ -6,7 +6,7 @@ A portable governance and execution framework that puts a policy, evidence, and 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4.svg)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux--dev-blue.svg)](#status)
-[![Tests](https://img.shields.io/badge/tests-44%20passing-brightgreen.svg)](https://github.com/AnonymousNomad/cyber-sop-harness/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-47%20passing-brightgreen.svg)](https://github.com/AnonymousNomad/cyber-sop-harness/actions/workflows/ci.yml)
 
 ## Why
 
@@ -35,7 +35,7 @@ This project is for authorized work only. It does not authorize targets, bypass 
 |---|---|
 | Governed offline pipeline | Working Windows/Linux CLI path through policy, permit, synthetic-tool dispatch, verification, report, journal, and replay tests; zero live-target executions to date |
 | Command desk | Fixed-verb terminal surface with doctor, status, help, model inspection, JSON mode, bounded history, sanitization, and emergency stop; Phase B views are in progress |
-| Cross-platform builds | Linux/arm64 build and 44-test validation pass locally; custody uses DPAPI on Windows and a passphrase-protected key file elsewhere; .NET chosen for compile-time safety in a governance framework where type errors mean bypasses |
+| Cross-platform builds | Linux/arm64 build and 47-test validation pass locally; custody uses DPAPI on Windows and a passphrase-protected key file elsewhere; .NET chosen for compile-time safety in a governance framework where type errors mean bypasses |
 | Local model runtime | LFM2.5 can be hash-pinned and served from the desk at 2K context in development preview; loopback-only runtime is offline with tools disabled |
 | Security tools | One read-only HTTP header-inspection adapter exists for authorized desk dispatch with DNS pinning, redirect/proxy/cookie blocking, bounded output, sensitive-header redaction, evidence, and provenance; more adapters via the typed `IToolAdapter` interface |
 | Production gate | No release has passed live-target containment, operator acceptance, threat-model review, and independent evidence verification |
@@ -183,15 +183,15 @@ Every governed run produces: a `DurableEvidenceJournal` with recovery and tamper
 
 ## Tests
 
-44 deterministic offline tests across three self-running suites. The count is deliberately conservative: these are fast, reproducible contract and behavior tests rather than broad model-output snapshots. Real-model smoke coverage remains opt-in so CI does not depend on weights or network access:
+47 deterministic offline tests across three self-running suites. The count is deliberately conservative: these are fast, reproducible contract and behavior tests rather than broad model-output snapshots. Real-model smoke coverage remains opt-in so CI does not depend on weights or network access:
 
 ```powershell
 dotnet run --project tests/Phase2.Tests --configuration Release  # 10 tests: policy, permits, workers, job objects
-dotnet run --project tests/Phase3.Tests --configuration Release  # 27 tests: providers, evidence, provenance, model pinning, custody, HTTP inspection
+dotnet run --project tests/Phase3.Tests --configuration Release  # 30 tests: providers, evidence, provenance, model pinning, custody, HTTP inspection
 dotnet run --project tests/CommandDesk.Tests --configuration Release  # 7 tests: input, rendering, history, stop behavior
 ```
 
-A real-model runtime smoke test is opt-in via `PHASE3B_REAL_MODEL=1` and never runs in CI. CI builds on Windows and Linux with warnings treated as errors, runs all 44 deterministic tests, and rejects changes that cannot meet those gates.
+A real-model runtime smoke test is opt-in via `PHASE3B_REAL_MODEL=1` and never runs in CI. CI builds on Windows and Linux with warnings treated as errors, runs all 47 deterministic tests, and rejects changes that cannot meet those gates.
 
 ## Documentation
 

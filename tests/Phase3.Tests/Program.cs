@@ -39,6 +39,9 @@ internal static class Program
         await Run("synthetic fixture tool adapter", TestSyntheticFixtureToolAdapter);
         await Run("authorized HTTP header inspection", TestAuthorizedHttpHeaderInspection);
         await Run("engagement manifest file validation", TestEngagementManifestFile);
+        await Run("permit expiry during tool execution", TestPermitExpiryDuringExecution);
+        await Run("multi-hop redirect scope crossing", TestMultiHopRedirectScopeCrossing);
+        await Run("key rotation mid-run evidence integrity", TestKeyRotationMidRunEvidence);
         if (Environment.GetEnvironmentVariable("PHASE3B_REAL_MODEL") == "1") await Run("real Phase 3B local model runtime", TestRealModelRuntime);
         Console.WriteLine($"phase3_tests=passed count={_passed}");
         return 0;
@@ -165,7 +168,7 @@ internal static class Program
         Assert(timeoutRun.State == WorkflowState.Running, "timeout failure changed state despite rejected transition");
 
         using var expiredFixture = new RuntimeFixture();
-        var expiredPermit = expiredFixture.Issuer.Issue(expiredFixture.Action, expiredFixture.Manifest, expiredFixture.WorkerRef, lifetime: TimeSpan.FromMilliseconds(100));
+        var expiredPermit = expiredFixture.Issuer.Issue(expiredFixture.Action, expiredFixture.Manifest, expiredFixture.WorkerRef, lifetime: TimeSpan.FromMilliseconds(15));
         Assert(expiredFixture.Issuer.TryConsume(expiredPermit, expiredFixture.Action, expiredFixture.Manifest, expiredFixture.WorkerRef), "short-lived permit was not consumed for expiry test");
         Thread.Sleep(250);
         var expired = await expiredFixture.Broker.ExecuteAsync(expiredFixture.Envelope, expiredFixture.Manifest, expiredFixture.Policy, expiredPermit, expiredFixture.WorkerRef, null, CancellationToken.None);
@@ -1173,6 +1176,77 @@ internal static class Program
         }
     }
 
+
+    private static async Task TestPermitExpiryDuringExecution()
+    {
+        using var fixture = new RuntimeFixture(new SlowToolAdapter("fixture-tool", "1.0", TimeSpan.FromMilliseconds(35)));
+        var permit = fixture.Issuer.Issue(fixture.Action, fixture.Manifest, fixture.WorkerRef, lifetime: TimeSpan.FromMilliseconds(15));
+        Assert(fixture.Issuer.TryConsume(permit, fixture.Action, fixture.Manifest, fixture.WorkerRef), "permit was not consumed before dispatch");
+        var outcome = await fixture.Broker.ExecuteAsync(fixture.Envelope, fixture.Manifest, fixture.Policy, permit, fixture.WorkerRef, null, CancellationToken.None);
+        Assert(outcome.Dispatched, "valid-at-consume-time permit was blocked at claim");
+        Assert(outcome.Evidence.Status == ToolResultStatus.Success || outcome.Evidence.Status == ToolResultStatus.Partial, "slow adapter did not complete");
+        Assert(permit.ExpiresAt < AuthoritativeClock.UtcNow, "permit should have expired during execution");
+        Assert(fixture.Provenance.Verify(outcome.Provenance, outcome.Evidence, fixture.Manifest), "evidence from expired-permit-mid-execution failed provenance verification");
+    }
+
+    private static Task TestMultiHopRedirectScopeCrossing()
+    {
+        var now = DateTimeOffset.UtcNow;
+        using var key = RSA.Create(2048);
+        var draft = CreateManifest(key, now);
+        var manifest = draft with { Scope = draft.Scope with { RedirectPolicy = "same-origin" } };
+        var evaluator = new ScopeEvaluator(manifest);
+        Assert(evaluator.Evaluate("http://127.0.0.1:8080/").Allowed, "initial target was blocked");
+        var hop1 = evaluator.EvaluateRedirect("http://127.0.0.1:8080/", "http://127.0.0.1:8080/redirect");
+        Assert(hop1.Allowed, "same-origin first hop was blocked");
+        var hop2 = evaluator.EvaluateRedirect("http://127.0.0.1:8080/redirect", "https://outside.invalid/final");
+        Assert(!hop2.Allowed, "second hop to out-of-scope host was allowed");
+        var crossScheme = evaluator.EvaluateRedirect("http://127.0.0.1:8080/", "https://127.0.0.1:8081/");
+        Assert(!crossScheme.Allowed, "cross-scheme redirect to different port was allowed");
+        var blockAll = manifest with { Scope = manifest.Scope with { RedirectPolicy = "block" } };
+        var blockEvaluator = new ScopeEvaluator(blockAll);
+        Assert(!blockEvaluator.EvaluateRedirect("http://127.0.0.1:8080/", "http://127.0.0.1:8080/any").Allowed, "block-all policy allowed a redirect");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestKeyRotationMidRunEvidence()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "csh-key-rotation-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var fixture = new RuntimeFixture();
+            var outcome = fixture.Broker.ExecuteAsync(fixture.Envelope, fixture.Manifest, fixture.Policy, fixture.Permit, fixture.WorkerRef, null, CancellationToken.None).GetAwaiter().GetResult();
+            Assert(outcome.Dispatched && fixture.Evidence.VerifyIntegrity(), "evidence ledger was not intact before rotation");
+
+            var protector = new TestSecretProtector();
+            var store = new ProvenanceKeyStore(Path.Combine(root, "keys"), protector, "mid-run-rotation");
+            ProvenanceStamp preRotationStamp;
+            using (var originalKey = store.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence))
+            {
+                var identity = new ProductIdentity("csh", "mid-run", Canonicalization.Sha256Hex("build"), ProvenanceKeyCustody.Fingerprint(originalKey));
+                using var preAuthority = new ProvenanceAuthority(identity, originalKey);
+                preRotationStamp = preAuthority.Issue(outcome.Evidence, fixture.Manifest);
+                Assert(preAuthority.Verify(preRotationStamp, outcome.Evidence, fixture.Manifest), "pre-rotation stamp failed initial verification");
+            }
+
+            using var rotatedKey = store.Rotate(ProvenanceKeyRole.RuntimeEvidence);
+            var retired = store.RetiredPublicKeys(ProvenanceKeyRole.RuntimeEvidence);
+            Assert(retired.Count == 1, "retired key archive was empty");
+
+            var postIdentity = new ProductIdentity("csh", "mid-run", Canonicalization.Sha256Hex("build"), ProvenanceKeyCustody.Fingerprint(rotatedKey));
+            using (var postAuthority = new ProvenanceAuthority(postIdentity, rotatedKey, retired))
+            {
+                Assert(postAuthority.Verify(preRotationStamp, outcome.Evidence, fixture.Manifest), "pre-rotation stamp did not verify under rotated authority with retired keys");
+                Assert(!postAuthority.Verify(preRotationStamp with { EvidenceHash = new string('0', 64) }, outcome.Evidence, fixture.Manifest), "tampered stamp verified under rotated authority");
+            }
+
+            Assert(fixture.Evidence.VerifyIntegrity(), "evidence ledger integrity broke during key rotation simulation");
+            Assert(fixture.Provenance.Verify(outcome.Provenance, outcome.Evidence, fixture.Manifest), "original fixture provenance broke independently of external key rotation");
+        }
+        finally { Directory.Delete(root, true); }
+        return Task.CompletedTask;
+    }
     private static async Task TestEngagementManifestFile()
     {
         using var key = RSA.Create(2048);
@@ -1431,5 +1505,18 @@ internal static class Program
         public string ToolVersion { get; }
         public Task<ToolAdapterResult> ExecuteAsync(ToolExecutionContext context, CancellationToken cancellationToken) => Task.FromResult(new ToolAdapterResult(ToolResultStatus.Success, 0, Array.Empty<byte>(), new[] { "non-marker" }, Array.Empty<string>(), "SUCCEEDED"));
         public Task<string> CleanupAsync(ToolExecutionContext context, ToolAdapterResult result, CancellationToken cancellationToken) => Task.FromResult("CLEANUP_OK|" + context.Envelope.ActionHash);
+    }
+
+    private sealed class SlowToolAdapter : FixtureToolAdapter
+    {
+        private readonly TimeSpan _delay;
+
+        public SlowToolAdapter(string toolRef, string toolVersion, TimeSpan delay) : base(toolRef, toolVersion, "slow-result", ToolResultStatus.Success, "slow.observation") { _delay = delay; }
+
+        public override async Task<ToolAdapterResult> ExecuteAsync(ToolExecutionContext context, CancellationToken cancellationToken)
+        {
+            await Task.Delay(_delay, cancellationToken);
+            return await base.ExecuteAsync(context, cancellationToken);
+        }
     }
 }
