@@ -7,5 +7,13 @@
     <Project Path="tests/Phase2.Tests/Phase2.Tests.csproj" />
     <Project Path="tests/Phase3.Tests/Phase3.Tests.csproj" />
     <Project Path="tests/CommandDesk.Tests/CommandDesk.Tests.csproj" />
+    <Project Path="tests/PolicyEngine.Battery/PolicyEngine.Battery.csproj" />
+    <Project Path="tests/ScopeEvaluator.Battery/ScopeEvaluator.Battery.csproj" />
+    <Project Path="tests/EvidenceChain.Battery/EvidenceChain.Battery.csproj" />
+    <Project Path="tests/ToolAdapter.Battery/ToolAdapter.Battery.csproj" />
+    <Project Path="tests/WorkerContainment.Battery/WorkerContainment.Battery.csproj" />
+    <Project Path="tests/SecretCustody.Battery/SecretCustody.Battery.csproj" />
+    <Project Path="tests/ProviderModel.Battery/ProviderModel.Battery.csproj" />
+    <Project Path="tests/EndToEnd.Battery/EndToEnd.Battery.csproj" />
   </Folder>
 </Solution>

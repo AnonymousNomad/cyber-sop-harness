@@ -32,3 +32,27 @@ jobs:
 
       - name: Command desk tests
         run: dotnet run --project tests/CommandDesk.Tests --configuration Release
+
+      - name: Policy engine battery
+        run: dotnet run --project tests/PolicyEngine.Battery --configuration Release
+
+      - name: Scope evaluator battery
+        run: dotnet run --project tests/ScopeEvaluator.Battery --configuration Release
+
+      - name: Evidence chain battery
+        run: dotnet run --project tests/EvidenceChain.Battery --configuration Release
+
+      - name: Tool adapter battery
+        run: dotnet run --project tests/ToolAdapter.Battery --configuration Release
+
+      - name: Worker containment battery
+        run: dotnet run --project tests/WorkerContainment.Battery --configuration Release
+
+      - name: Secret custody battery
+        run: dotnet run --project tests/SecretCustody.Battery --configuration Release
+
+      - name: Provider model battery
+        run: dotnet run --project tests/ProviderModel.Battery --configuration Release
+
+      - name: End-to-end battery
+        run: dotnet run --project tests/EndToEnd.Battery --configuration Release
