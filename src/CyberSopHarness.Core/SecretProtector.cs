@@ -47,6 +47,114 @@ public sealed class WindowsDpapiSecretProtector : ISecretProtector
     }
 }
 
+public sealed class PassphraseSecretProtector : ISecretProtector
+{
+    private const int FormatVersion = 1;
+    private const int SaltBytes = 16;
+    private const int NonceBytes = 12;
+    private const int TagBytes = 16;
+    private const int Iterations = 210_000;
+    private static readonly byte[] Magic = "CSHKEY1"u8.ToArray();
+    private readonly string _applicationName;
+    private readonly Func<string> _passphraseProvider;
+
+    public PassphraseSecretProtector(string applicationName, Func<string> passphraseProvider)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(applicationName);
+        ArgumentNullException.ThrowIfNull(passphraseProvider);
+        _applicationName = applicationName;
+        _passphraseProvider = passphraseProvider;
+    }
+
+    public bool IsAvailable => true;
+
+    public byte[] Protect(byte[] plaintext, string context)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(context);
+        var nonce = RandomNumberGenerator.GetBytes(NonceBytes);
+        var salt = RandomNumberGenerator.GetBytes(SaltBytes);
+        var ciphertext = new byte[plaintext.Length];
+        var tag = new byte[TagBytes];
+        try
+        {
+            using var aes = new AesGcm(DeriveKey(GetPassphrase(), salt), TagBytes);
+            aes.Encrypt(nonce, plaintext, ciphertext, tag, Encoding.UTF8.GetBytes(Context(context)));
+            var result = new byte[Magic.Length + sizeof(int) + sizeof(int) + SaltBytes + NonceBytes + TagBytes + ciphertext.Length];
+            var offset = 0;
+            Magic.CopyTo(result, offset);
+            offset += Magic.Length;
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(result.AsSpan(offset), FormatVersion);
+            offset += sizeof(int);
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(result.AsSpan(offset), Iterations);
+            offset += sizeof(int);
+            salt.CopyTo(result, offset);
+            offset += SaltBytes;
+            nonce.CopyTo(result, offset);
+            offset += NonceBytes;
+            tag.CopyTo(result, offset);
+            offset += TagBytes;
+            ciphertext.CopyTo(result, offset);
+            return result;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(nonce);
+            CryptographicOperations.ZeroMemory(salt);
+            CryptographicOperations.ZeroMemory(ciphertext);
+            CryptographicOperations.ZeroMemory(tag);
+        }
+    }
+
+    public byte[] Unprotect(byte[] protectedBytes, string context)
+    {
+        ArgumentNullException.ThrowIfNull(protectedBytes);
+        ArgumentException.ThrowIfNullOrWhiteSpace(context);
+        var headerLength = Magic.Length + sizeof(int) + sizeof(int) + SaltBytes + NonceBytes + TagBytes;
+        if (protectedBytes.Length <= headerLength || !protectedBytes.AsSpan(0, Magic.Length).SequenceEqual(Magic))
+            throw new CryptographicException("protected blob format is invalid");
+        var version = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(protectedBytes.AsSpan(Magic.Length));
+        var iterations = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(protectedBytes.AsSpan((Magic.Length + sizeof(int))));
+        if (version != FormatVersion || iterations < Iterations) throw new CryptographicException("protected blob parameters are not approved");
+        var salt = protectedBytes.AsSpan(Magic.Length + sizeof(int) * 2, SaltBytes).ToArray();
+        var nonce = protectedBytes.AsSpan(Magic.Length + sizeof(int) * 2 + SaltBytes, NonceBytes).ToArray();
+        var tag = protectedBytes.AsSpan(Magic.Length + sizeof(int) * 2 + SaltBytes + NonceBytes, TagBytes).ToArray();
+        var ciphertext = protectedBytes.AsSpan(headerLength).ToArray();
+        var plaintext = new byte[ciphertext.Length];
+        try
+        {
+            using var aes = new AesGcm(DeriveKey(GetPassphrase(), salt), TagBytes);
+            aes.Decrypt(nonce, ciphertext, tag, plaintext, Encoding.UTF8.GetBytes(Context(context)));
+            return plaintext;
+        }
+        catch (CryptographicException)
+        {
+            throw new CryptographicException("passphrase is incorrect or protected data was tampered with");
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(salt);
+            CryptographicOperations.ZeroMemory(nonce);
+            CryptographicOperations.ZeroMemory(tag);
+            CryptographicOperations.ZeroMemory(ciphertext);
+        }
+    }
+
+    private static byte[] DeriveKey(string passphrase, byte[] salt)
+    {
+        return Rfc2898DeriveBytes.Pbkdf2(passphrase, salt, Iterations, HashAlgorithmName.SHA512, 32);
+    }
+
+    private string GetPassphrase()
+    {
+        var passphrase = _passphraseProvider();
+        if (string.IsNullOrWhiteSpace(passphrase) || passphrase.Length < 12) throw new InvalidOperationException("custody passphrase must contain at least 12 characters");
+        return passphrase;
+    }
+
+    private string Context(string context) => _applicationName + "|" + context;
+
+}
+
 public sealed class TestSecretProtector : ISecretProtector
 {
     private readonly byte[] _masterKey = RandomNumberGenerator.GetBytes(32);
@@ -102,6 +210,8 @@ public sealed class PersistentSecretStore
     private readonly string _directory;
     private readonly ISecretProtector _protector;
     private readonly string _applicationEntropy;
+
+    public ISecretProtector Protector => _protector;
 
     public PersistentSecretStore(string directory, ISecretProtector protector, string applicationEntropy)
     {

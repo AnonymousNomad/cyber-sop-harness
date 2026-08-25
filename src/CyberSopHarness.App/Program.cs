@@ -20,8 +20,14 @@ internal static class Program
             var endpointStore = new ExternalEndpointStore(Path.Combine(dataDir, "external-endpoint.json"));
             PersistentSecretStore CreateSecrets()
             {
-                var protector = new WindowsDpapiSecretProtector("cyber-sop-harness");
+                var protector = CreateProtector();
                 return new PersistentSecretStore(Path.Combine(dataDir, "secrets"), protector, "cyber-sop-harness");
+            }
+
+            ISecretProtector CreateProtector()
+            {
+                if (OperatingSystem.IsWindows()) return new WindowsDpapiSecretProtector("cyber-sop-harness");
+                return new PassphraseSecretProtector("cyber-sop-harness", ReadCustodyPassphrase);
             }
 
             switch (args[0])
@@ -37,7 +43,7 @@ internal static class Program
                 case "endpoint":
                     return await EndpointAsync(endpointStore, args);
                 case "desk":
-                    return await DeskAsync(selectionStore, endpointStore, args, dataDir);
+                    return await DeskAsync(selectionStore, endpointStore, args, dataDir, CreateProtector);
                 default:
                     Console.Error.WriteLine("unknown command: " + args[0]);
                     PrintHelp();
@@ -56,6 +62,14 @@ internal static class Program
         var index = Array.IndexOf(args, "--data-dir");
         if (index >= 0 && index + 1 < args.Length) return Path.GetFullPath(args[index + 1]);
         return Path.Combine(Directory.GetCurrentDirectory(), "data");
+    }
+
+    private static string ReadCustodyPassphrase()
+    {
+        Console.Error.Write("Custody passphrase: ");
+        var passphrase = Console.ReadLine();
+        if (string.IsNullOrWhiteSpace(passphrase) || passphrase.Length < 12) throw new InvalidOperationException("custody passphrase must contain at least 12 characters");
+        return passphrase;
     }
 
     private static async Task<int> SetupAsync(PersistentSecretStore secrets, ModelProviderSelectionStore selectionStore, string[] args, string dataDir, ExternalEndpointStore endpointStore)
@@ -91,7 +105,8 @@ internal static class Program
         ModelProviderSelectionStore selectionStore,
         ExternalEndpointStore endpointStore,
         string[] args,
-        string dataDir)
+        string dataDir,
+        Func<ISecretProtector> createProtector)
     {
         var selection = await selectionStore.LoadAsync(CancellationToken.None);
         var endpoint = await endpointStore.LoadAsync(CancellationToken.None);
@@ -123,6 +138,92 @@ internal static class Program
             : await EngagementManifestFile.LoadAsync(Path.GetFullPath(engagementPath), CancellationToken.None);
         var historyDirectory = args.Contains("--no-history", StringComparer.OrdinalIgnoreCase) ? null : Path.Combine(dataDir, "command-history");
         var replOptions = new CommandDeskReplOptions();
+
+        async Task<CommandDeskResult> SubmitProposalAsync(string path)
+        {
+            if (engagementManifest is null) return CommandDeskResult.UsageError("proposal submission requires --engagement-manifest");
+            var keyPath = ArgumentValue(args, "--owner-public-key");
+            if (keyPath is null) return CommandDeskResult.UsageError("proposal submission requires --owner-public-key");
+            var ownerKeyPem = await File.ReadAllTextAsync(keyPath, CancellationToken.None);
+            var trustValidation = EngagementManifestFile.Validate(engagementManifest, ownerKeyPem);
+            if (!trustValidation.IsValid) return CommandDeskResult.Failure("engagement authorization is invalid", trustValidation.Errors.ToArray());
+            var proposalText = await File.ReadAllTextAsync(path, CancellationToken.None);
+            if (!ActionProposalParser.TryParse(proposalText, out var action, out var parseReason) || action is null)
+                return CommandDeskResult.Failure("model proposal was rejected", parseReason ?? "invalid action request");
+            var actionValidation = ActionRequestValidator.Validate(action);
+            if (!actionValidation.IsValid) return CommandDeskResult.Failure("proposal failed action validation", actionValidation.Errors.ToArray());
+            if (action.CapabilityRef != HttpHeaderInspectTool.CapabilityRef)
+                return CommandDeskResult.Failure("proposal dispatch is unavailable for this capability", $"registered_dispatch={HttpHeaderInspectTool.CapabilityRef}");
+
+            var capabilities = CreateDeskCapabilities();
+            var policy = new PolicyEngine(capabilities, CreateOwnerTrustStore(engagementManifest, ownerKeyPem)).Evaluate(action, engagementManifest, null);
+            if (policy.Decision != PolicyDecision.Allow)
+                return CommandDeskResult.Failure("proposal blocked by policy", policy.Reason, $"action_hash={policy.ActionHash}");
+            if (!Uri.TryCreate(action.TargetRef, UriKind.Absolute, out var targetUri) || targetUri.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(targetUri.UserInfo))
+                return CommandDeskResult.Failure("proposal target is invalid for contained HTTP inspection", action.TargetRef);
+
+            var provider = new ProviderDescriptor(
+                "desk-proposal-file",
+                "operator-approved-action",
+                "1.0",
+                Canonicalization.Sha256Hex("desk-proposal-file:v1"),
+                "local-only",
+                "none",
+                "typed");
+            var proposal = new ProviderProposal(provider, action, Canonicalization.Sha256Hex(Canonicalization.ActionPayload(action)), TimeSpan.Zero, 0, ProviderFailureClass.None);
+            var envelope = ActionEnvelopeFactory.Create(proposal);
+            var policyEngine = new PolicyEngine(capabilities, CreateOwnerTrustStore(engagementManifest, ownerKeyPem));
+            using var issuer = new PermitIssuer(policyEngine);
+            var permit = issuer.Issue(action, engagementManifest, "desk-http-worker");
+            if (!issuer.TryConsume(permit, action, engagementManifest, "desk-http-worker"))
+                return CommandDeskResult.Failure("one-use execution permit could not be bound", $"action_hash={policy.ActionHash}");
+
+            Directory.CreateDirectory(dataDir);
+            var journal = new DurableEvidenceJournal(Path.Combine(dataDir, "evidence.journal"), new DurableArtifactStore(Path.Combine(dataDir, "artifacts")));
+            var evidence = new EvidenceLedger(new ArtifactStore(), journal);
+            var keyStore = new ProvenanceKeyStore(Path.Combine(dataDir, "keys"), createProtector(), "cyber-sop-harness");
+            using var signingKey = keyStore.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence);
+            using var provenance = new ProvenanceAuthority(new ProductIdentity(
+                "cyber-sop-harness",
+                "0.1.0-desk",
+                Canonicalization.Sha256Hex("cyber-sop-harness-desk-build"),
+                ProvenanceKeyCustody.Fingerprint(signingKey)), signingKey);
+            var origin = targetUri.GetLeftPart(UriPartial.Authority).TrimEnd('/') + "/";
+            var toolManifest = new ToolCapabilityManifest(
+                "http-header-inspect",
+                "1.0",
+                HttpHeaderInspectTool.CapabilityRef,
+                "unprivileged",
+                true,
+                new[] { origin },
+                new[] { "http_metadata" },
+                true,
+                new[] { "raw", "redacted", "observation" },
+                true,
+                TimeSpan.FromSeconds(15),
+                64 * 1024);
+            await using var adapter = new HttpHeaderInspectTool("http-header-inspect", "1.0", action.ResolvedAddresses.ToArray());
+            var registry = new ToolRegistry();
+            registry.Register(toolManifest, adapter);
+            registry.Freeze();
+            var broker = new ToolBroker(registry, evidence, issuer, provenance);
+            var outcome = await broker.ExecuteAsync(envelope, engagementManifest, policy, permit, "desk-http-worker", null, CancellationToken.None);
+            var provenanceVerified = provenance.Verify(outcome.Provenance, outcome.Evidence, engagementManifest);
+            if (!outcome.Dispatched || !provenanceVerified)
+                return CommandDeskResult.Failure("governed dispatch did not complete safely", [
+                    $"status={outcome.Evidence.Status}",
+                    $"failure={outcome.FailureReason ?? "none"}",
+                    $"evidence={outcome.Evidence.ResultEventId}",
+                    $"provenance_verified={provenanceVerified}"
+                ]);
+
+            return CommandDeskResult.Success(
+                "governed HTTP inspection completed",
+                $"evidence={outcome.Evidence.ResultEventId}",
+                $"status={outcome.Evidence.Status}",
+                $"provenance_verified={provenanceVerified}",
+                $"cleanup={outcome.Evidence.CleanupResult}");
+        }
 
         async Task<CommandDeskResult> ModelCommandAsync(CommandDeskInvocation invocation, CancellationToken cancellationToken)
         {
@@ -237,7 +338,9 @@ internal static class Program
                             ? ValidateProposal(Path.GetFullPath(proposalPath))
                             : CommandDeskResult.UsageError("proposal validate requires --file"),
                     "proposal" when invocation.Arguments.ElementAtOrDefault(0)?.Equals("submit", StringComparison.OrdinalIgnoreCase) == true =>
-                        CommandDeskResult.Failure("proposal execution requires portable provenance-key custody; dispatch is intentionally unavailable on this platform"),
+                        ArgumentValue(invocation.Arguments.ToArray(), "--file") is { Length: > 0 } submissionPath
+                            ? await SubmitProposalAsync(Path.GetFullPath(submissionPath))
+                            : CommandDeskResult.UsageError("proposal submit requires --file"),
                     "doctor" => DoctorResult(state, dataDir, selection?.ProviderRef, endpoint?.ToString()),
                     "emergency" when invocation.Arguments.Count == 1 && invocation.Arguments[0].Equals("status", StringComparison.OrdinalIgnoreCase) =>
                         state.EmergencyStopped
@@ -447,8 +550,7 @@ internal static class Program
         var journal = new DurableEvidenceJournal(Path.Combine(dataDir, "evidence.journal"), new DurableArtifactStore(artifactsDir));
         var evidence = new EvidenceLedger(new ArtifactStore(), journal);
         var audit = new WorkflowAuditLog(journal);
-        var protector = new WindowsDpapiSecretProtector("cyber-sop-harness");
-        var keyStore = new ProvenanceKeyStore(Path.Combine(dataDir, "keys"), protector, "cyber-sop-harness");
+        var keyStore = new ProvenanceKeyStore(Path.Combine(dataDir, "keys"), secrets.Protector, "cyber-sop-harness");
         using var signingKey = keyStore.CreateOrLoad(ProvenanceKeyRole.RuntimeEvidence);
         using var provenance = new ProvenanceAuthority(new ProductIdentity("cyber-sop-harness", "0.1.0-cli", Canonicalization.Sha256Hex("cyber-sop-harness-cli-build"), ProvenanceKeyCustody.Fingerprint(signingKey)), signingKey);
         var redactor = new OutputRedactor(await LoadConfiguredSecretsAsync(secrets, session.Selection, cancellationToken));

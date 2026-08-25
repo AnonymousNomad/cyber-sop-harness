@@ -6,7 +6,7 @@ A portable governance and execution framework that puts a policy, evidence, and 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4.svg)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux--dev-blue.svg)](#status)
-[![Tests](https://img.shields.io/badge/tests-43%20passing-brightgreen.svg)](https://github.com/AnonymousNomad/cyber-sop-harness/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-44%20passing-brightgreen.svg)](https://github.com/AnonymousNomad/cyber-sop-harness/actions/workflows/ci.yml)
 
 ## Why
 
@@ -33,11 +33,11 @@ This project is for authorized work only. It does not authorize targets, bypass 
 
 | Capability | Available today |
 |---|---|
-| Governed offline pipeline | Working Windows CLI path through policy, permit, synthetic-tool dispatch, verification, report, journal, and replay tests |
+| Governed offline pipeline | Working Windows/Linux CLI path through policy, permit, synthetic-tool dispatch, verification, report, journal, and replay tests |
 | Command desk | Fixed-verb terminal surface with doctor, status, help, model inspection, JSON mode, bounded history, sanitization, and emergency stop; Phase B views are in progress |
-| Cross-platform builds | Linux/arm64 build and 43-test validation pass locally; full evidence-backed execution still requires Windows DPAPI custody today |
+| Cross-platform builds | Linux/arm64 build and 44-test validation pass locally; custody uses DPAPI on Windows and a passphrase-protected key file elsewhere |
 | Local model runtime | LFM2.5 can be hash-pinned and served from the desk at 2K context in development preview; loopback-only runtime is offline with tools disabled |
-| Security tools | One read-only HTTP header-inspection adapter exists for authorized engagements with DNS pinning, redirect/proxy/cookie blocking, bounded output, and sensitive-header redaction. Desk dispatch still awaits portable provenance-key custody |
+| Security tools | One read-only HTTP header-inspection adapter exists for authorized desk dispatch with DNS pinning, redirect/proxy/cookie blocking, bounded output, sensitive-header redaction, evidence, and provenance |
 | Production gate | No release has passed live-target containment, operator acceptance, threat-model review, and independent evidence verification |
 
 Do not point this software at infrastructure you are not explicitly authorized to assess.
@@ -48,7 +48,7 @@ Do not point this software at infrastructure you are not explicitly authorized t
 - **Fail-closed bootstrap** — missing selection, tampered model, absent consent, non-loopback endpoint, or runtime readiness failure aborts startup with a controlled error.
 - **Strict proposal parsing** — models return bare JSON action requests; fences and commentary are normalized away, malformed output is rejected, never guessed.
 - **Frozen typed tool registry** — tools execute only through typed adapters bound by capability registry and one-use permits; no free-form shell.
-- **Durable evidence** — tamper-detecting journal, signed artifact hashes, and DPAPI-protected provenance keys; recovery on restart with tamper detection.
+- **Durable evidence** — tamper-detecting journal, signed artifact hashes, DPAPI-protected keys on Windows, and passphrase-protected key files on other desktop platforms.
 - **Full governance workflow** — action → policy → permit → dispatch → evidence → independent verification → report, with a live-visible `run` pipeline and JSON journal.
 - **No runtime bloat** — zero-dependency testable core; model weights and runtime engines are user-staged and never bundled.
 
@@ -120,7 +120,7 @@ dotnet build CyberSopHarness.slnx --configuration Release
 
 Model weights and the llama.cpp engine are **user-staged, not bundled** — see [Configuration](#configuration).
 
-Windows DPAPI currently protects provenance keys and persisted secrets. Therefore, governed runs are Windows-only today even though the core builds and the desk shell validate on Linux.
+Windows uses DPAPI. Other desktop platforms use PBKDF2-HMAC-SHA512 plus AES-256-GCM key protection with an interactive passphrase (12-character minimum). Custody remains local; the harness never uploads keys or passphrases.
 
 ## Quickstart
 
@@ -142,7 +142,7 @@ Start the fixed-verb operations shell without enabling free-form terminal access
 dotnet run --project src/CyberSopHarness.App -- desk
 ```
 
-The desk supports `action`, `doctor`, `emergency`, `engagement`, `evidence`, `exit`, `help`, `model`, `proposal`, `report`, and `status`. Use `--engagement-manifest /absolute/path.json` and `--owner-public-key /absolute/path.pem` to validate a signed engagement or proposal without target interaction: `engagement validate` and `proposal validate --file /absolute/proposal.json`. Use `--json` for machine-readable output, `--no-color` to disable styling explicitly, `--no-history` for ephemeral sessions, and `--command 'status\nhelp'` for scripted checks. A critical result engages emergency stop and ends the REPL.
+The desk supports `action`, `doctor`, `emergency`, `engagement`, `evidence`, `exit`, `help`, `model`, `proposal`, `report`, and `status`. Use `--engagement-manifest /absolute/path.json` and `--owner-public-key /absolute/path.pem` to validate a signed engagement or proposal without target interaction (`engagement validate`, `proposal validate --file`) or to submit an authorized `http.headers.inspect` proposal (`proposal submit --file`). Use `--json` for machine-readable output, `--no-color` to disable styling explicitly, `--no-history` for ephemeral sessions, and `--command 'status\nhelp'` for scripted checks. A critical result engages emergency stop and ends the REPL.
 
 For a staged model, review its license first, then use:
 
@@ -163,7 +163,7 @@ Pinning verifies every manifest artifact by SHA-256 and enforces explicit disk/m
 | `setup` | Provider/model selection wizard with full disclosure checks |
 | `run [--port N] [--telemetry] [--data-dir DIR]` | Select → bootstrap → probe → governed execution → stop |
 | `endpoint set <url>` / `clear` / `show` | External model endpoint custody (https any host, http loopback-only) |
-| `secret set/get/clear/rotate <name>` | DPAPI-protected secret custody |
+| `secret set/get/clear/rotate <name>` | Platform-protected secret custody |
 | `model list` / `info <name>` / `select <name>` | Staged model catalog and active selection |
 | `status` | Selection, runtime, evidence, and endpoint state |
 | `desk [options]` | Fixed-verb command shell with plain/ANSI rendering, bounded history, JSON mode, and emergency stop |
@@ -176,19 +176,19 @@ Pinning verifies every manifest artifact by SHA-256 and enforces explicit disk/m
 
 ## Evidence and provenance
 
-Every governed run produces: a `DurableEvidenceJournal` with recovery and tamper detection, raw and redacted artifacts (SHA-256 verified by an independent verifier), and an OS-DPAPI-protected `runtimeevidence` provenance key with rotation support. `run` replays the journal on restart and re-verifies recorded evidence before continuing.
+Every governed run produces: a `DurableEvidenceJournal` with recovery and tamper detection, raw and redacted artifacts (SHA-256 verified by an independent verifier), and a protected `runtimeevidence` provenance key with rotation support. Protection is DPAPI-backed on Windows or passphrase-backed AES-GCM elsewhere. `run` replays the journal on restart and re-verifies recorded evidence before continuing.
 
 ## Tests
 
-43 deterministic offline tests across three self-running suites. The count is deliberately conservative: these are fast, reproducible contract and behavior tests rather than broad model-output snapshots. Real-model smoke coverage remains opt-in so CI does not depend on weights or network access:
+44 deterministic offline tests across three self-running suites. The count is deliberately conservative: these are fast, reproducible contract and behavior tests rather than broad model-output snapshots. Real-model smoke coverage remains opt-in so CI does not depend on weights or network access:
 
 ```powershell
 dotnet run --project tests/Phase2.Tests --configuration Release  # 10 tests: policy, permits, workers, job objects
-dotnet run --project tests/Phase3.Tests --configuration Release  # 26 tests: providers, evidence, provenance, model pinning, HTTP inspection
+dotnet run --project tests/Phase3.Tests --configuration Release  # 27 tests: providers, evidence, provenance, model pinning, custody, HTTP inspection
 dotnet run --project tests/CommandDesk.Tests --configuration Release  # 7 tests: input, rendering, history, stop behavior
 ```
 
-A real-model runtime smoke test is opt-in via `PHASE3B_REAL_MODEL=1` and never runs in CI. CI builds on Windows and Linux with warnings treated as errors, runs all 43 deterministic tests, and rejects changes that cannot meet those gates.
+A real-model runtime smoke test is opt-in via `PHASE3B_REAL_MODEL=1` and never runs in CI. CI builds on Windows and Linux with warnings treated as errors, runs all 44 deterministic tests, and rejects changes that cannot meet those gates.
 
 ## Documentation
 

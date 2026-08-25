@@ -1226,3 +1226,21 @@ Observed result: Created CyberSopHarness.slnx (net10.0 solution with Core, App, 
 Evidence: README.md, LICENSE, SECURITY.md, CONTRIBUTING.md, llms.txt, .github/workflows/ci.yml, CyberSopHarness.slnx, .gitignore, commit 9c50bbf, live repo page and API responses.
 Risk: The two PATs used in this session were shared through chat and are now considered exposed: user should revoke both immediately. Badges for CI will show 'no status' until the first workflow run on GitHub. README documents 33 tests, which the CI must keep green.
 Next: Watch the first CI run (workflow badge will light up); revoke/rotate the PATs; optionally add a demo GIF and enable Discussions/star-history for traction; later Phase 3C release packaging.
+
+### P3C-RUNTIME-0011: Governed HTTP dispatch is now available cross-platform from the desk
+
+Date: 2026-08-25
+
+Event type: Implementation
+
+Actor: Codex
+
+Intent: Remove the Windows-only custody blocker and connect signed engagement proposals to the governed HTTP header-inspection broker path without weakening scope or evidence controls.
+
+Observed result: Added `PassphraseSecretProtector` using versioned PBKDF2-HMAC-SHA512/AES-256-GCM custody blobs, a 210,000-iteration floor, per-blob salt/nonce, context-bound AAD, and a 12-character minimum. App startup selects DPAPI on Windows and passphrase custody elsewhere; provenance keys reuse the selected protector. Desk `proposal submit --file` now validates trust/action/policy, binds a one-use permit, registers an exact-origin HTTP inspection adapter using operator-resolved addresses, executes through `ToolBroker`, records durable evidence, signs provenance, verifies the stamp, and requires successful cleanup before success. Added deterministic recovery tests for correct unlock, wrong passphrase, tampering, context mismatch, and short passphrases. Live loopback desk smoke reached the local server and returned `status=Success`, `provenance_verified=True`, and `cleanup=SUCCEEDED`; it initially exposed the missing permit-consumption step, which was fixed before commit. Battery after the fix: build clean at 0 warnings/errors; Phase2=10, Phase3=27, CommandDesk=7 (44 total).
+
+Evidence: `src/CyberSopHarness.Core/SecretProtector.cs`, `src/CyberSopHarness.App/Program.cs`, `tests/Phase3.Tests/Program.cs`, README status/evidence sections, live isolated authorized loopback journal/artifacts.
+
+Risk: The HTTP adapter is read-only metadata inspection, but authorized-mode dispatch can contact real targets; production use still requires operator-supplied legal authorization, exact DNS resolution, containment review, and acceptance that Linux/macOS passphrase custody is portable rather than hardware-backed.
+
+Next: Add desk integration coverage so permit binding cannot regress; expand typed adapters only through the same policy/permit/evidence gate; add OS keychain or secure enclave custody where practical; then exercise one explicitly authorized external target under operational supervision.

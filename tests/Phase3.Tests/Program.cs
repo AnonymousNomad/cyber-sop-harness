@@ -28,6 +28,7 @@ internal static class Program
         await Run("provider selection persistence and manifest loading", TestProviderSelectionPersistence);
         await Run("durable evidence journal recovery and tamper detection", TestDurableEvidencePersistence);
         await Run("persistent secret custody round trip", TestPersistentSecretStore);
+        await Run("passphrase secret custody recovery", TestPassphraseSecretProtector);
         await Run("provenance key custody and rotation", TestProvenanceKeyCustody);
         await Run("provider selection wizard disclosures", TestProviderSelectionWizard);
         await Run("runtime journal mirror and recovery", TestRuntimeJournalMirror);
@@ -683,6 +684,37 @@ internal static class Program
                 var otherStore = new PersistentSecretStore(Path.Combine(root, "dpapi"), other, "different-entropy");
                 AssertThrows<CryptographicException>(() => { otherStore.Load("dpapi-provider"); return Task.CompletedTask; }, "wrong-entropy DPAPI load was accepted").GetAwaiter().GetResult();
             }
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+        return Task.CompletedTask;
+    }
+
+    private static Task TestPassphraseSecretProtector()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "cyber-sop-harness-passphrase-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            const string passphrase = "correct-horse-battery";
+            var custodian = new PassphraseSecretProtector("passphrase-test", () => passphrase);
+            var plaintext = Encoding.UTF8.GetBytes("release-signing-key");
+            var protectedBytes = custodian.Protect(plaintext, "runtime-evidence");
+            Assert(!protectedBytes.SequenceEqual(plaintext), "passphrase protector returned plaintext");
+            Assert(custodian.Unprotect(protectedBytes, "runtime-evidence").SequenceEqual(plaintext), "passphrase round trip diverged");
+
+            var wrongPassphrase = new PassphraseSecretProtector("passphrase-test", () => "wrong-horse-battery");
+            AssertThrows<CryptographicException>(() => Task.FromResult(wrongPassphrase.Unprotect(protectedBytes, "runtime-evidence")), "wrong custody passphrase unlocked protected data").GetAwaiter().GetResult();
+
+            var tampered = (byte[])protectedBytes.Clone();
+            tampered[^1] ^= 0x80;
+            AssertThrows<CryptographicException>(() => Task.FromResult(custodian.Unprotect(tampered, "runtime-evidence")), "tampered custody blob unlocked").GetAwaiter().GetResult();
+            AssertThrows<CryptographicException>(() => Task.FromResult(custodian.Unprotect(protectedBytes, "different-context")), "custody blob crossed contexts").GetAwaiter().GetResult();
+
+            var shortPassphrase = new PassphraseSecretProtector("passphrase-test", () => "short-pass");
+            AssertThrows<InvalidOperationException>(() => Task.FromResult(shortPassphrase.Protect(plaintext, "runtime-evidence")), "short custody passphrase was accepted").GetAwaiter().GetResult();
         }
         finally
         {
