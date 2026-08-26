@@ -2,7 +2,7 @@
 
 ## Skill Count
 
-Twenty-nine skills across seven phases. 142 tests passing. Each skill is a standalone `SKILL.md` with: what to do, why, code guidance, threat matrix, dependencies, pitfalls, and bugs to watch for.
+Forty-four skills across twelve phases. 161 tests passing. 142 tests passing. Each skill is a standalone `SKILL.md` with: what to do, why, code guidance, threat matrix, dependencies, pitfalls, and bugs to watch for.
 
 | Phase | Skills |
 |---|---|

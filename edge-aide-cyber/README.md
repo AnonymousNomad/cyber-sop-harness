@@ -131,6 +131,13 @@ edge-aide-cyber/
 │   │   ├── scope-evaluator.mjs # CIDR/domain/URL matching
 │   │   ├── evidence-chain.mjs  # SHA-256 hash chain
 │   │   └── secret-vault.mjs    # AES-256-GCM encryption
+│   ├── opsec/
+│   │   ├── manager.mjs         # Central anonymity controller
+│   │   ├── traffic-shaper.mjs  # Timing/UA randomization
+│   │   ├── dns-guard.mjs       # DNS leak prevention
+│   │   └── exfil-guard.mjs     # Sensitive data blocker
+│   ├── report/
+│   │   └── generator.mjs       # Bug bounty report generation
 │   ├── tools/
 │   │   ├── registry.mjs        # Adapter registry
 │   │   ├── sanitizer.mjs       # Output sanitization
@@ -147,8 +154,8 @@ edge-aide-cyber/
 │   └── recon-basic.sop.json    # Built-in recon SOP
 ├── public/
 │   └── index.html              # Terminal UI (Parrot OS aesthetic)
-├── tests/                      # 142 deterministic tests
-├── skills/                     # 29 development skills
+├── tests/                      # 161 deterministic tests
+├── skills/                     # 44 development skills
 ├── install.sh                  # Termux installer
 ├── ARCHITECTURE.md             # Integration architecture
 ├── ROADMAP.md                  # Phased development plan
@@ -164,6 +171,22 @@ edge-aide-cyber/
 - **Workspace jail**: all file operations confined to project root
 - **Model verification**: SHA-256 hash pinning before model load
 - **Output sanitization**: all tool output sanitized before display
+
+## Operational Security
+
+Built-in anonymity layer for anonymous operations:
+- **Tor routing** — all traffic through SOCKS5h proxy
+- **DNS leak prevention** — DNS-over-HTTPS and Tor DNS
+- **Traffic shaping** — randomized timing (200-2000ms), User-Agent rotation
+- **Exfil guard** — blocks sensitive data patterns from leaving device
+- **Session security** — encrypted state, secure wipe on exit
+
+## Report Generation
+
+Auto-generate professional bug bounty reports:
+- **Markdown** — HackerOne/Bugcrowd compatible
+- **JSON** — programmatic export
+- Includes: executive summary, findings detail, evidence chain hash, methodology coverage
 
 ## License
 
