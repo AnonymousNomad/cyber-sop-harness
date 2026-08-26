@@ -1,0 +1,7 @@
+node_modules/
+.edge-cyber/
+evidence/
+*.pid
+.env
+VAULT_PASSPHRASE
+daemon.log

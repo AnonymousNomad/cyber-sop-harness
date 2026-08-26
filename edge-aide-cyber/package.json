@@ -1,0 +1,18 @@
+{
+  "name": "edge-aide-cyber",
+  "version": "0.1.0",
+  "description": "Edge-device cybersecurity operations terminal with governed model interaction",
+  "type": "module",
+  "main": "src/server.mjs",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test tests/",
+    "lint": "echo 'linter not configured yet'"
+  },
+  "engines": { "node": ">=18.0.0" },
+  "dependencies": {
+    "ws": "^8.16.0",
+    "zod": "^3.23.0"
+  },
+  "license": "MIT"
+}

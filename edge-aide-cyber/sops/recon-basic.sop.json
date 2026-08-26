@@ -1,0 +1,27 @@
+{
+  "id": "recon-basic",
+  "name": "Basic Reconnaissance",
+  "description": "Initial target reconnaissance for bug bounty engagement",
+  "steps": [
+    {
+      "id": "dns-resolve",
+      "name": "DNS Resolution",
+      "description": "Resolve target domain to IP addresses",
+      "tool": "dns.reverse",
+      "riskLevel": "R1",
+      "params": { "target": "{{TARGET_DOMAIN}}" },
+      "dependsOn": [],
+      "approvalRequired": false
+    },
+    {
+      "id": "http-headers",
+      "name": "HTTP Header Inspection",
+      "description": "Inspect HTTP response headers for security misconfigurations",
+      "tool": "http.headers",
+      "riskLevel": "R1",
+      "params": { "url": "https://{{TARGET_DOMAIN}}" },
+      "dependsOn": ["dns-resolve"],
+      "approvalRequired": false
+    }
+  ]
+}
